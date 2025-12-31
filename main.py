@@ -118,4 +118,33 @@ if uploaded_file is not None:
             df_loss.columns = ['Motivo', 'Quantidade']
             fig_loss = px.bar(df_loss, x='Quantidade', y='Motivo', orientation='h', color='Quantidade', color_continuous_scale='Reds')
             fig_loss.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_loss, use_container_width=
+            
+            # CORREÇÃO APLICADA AQUI:
+            st.plotly_chart(fig_loss, use_container_width=True)
+            
+        else:
+            st.info("Colunas 'Motivo de Perda' ou 'Estado' não encontradas.")
+
+    col_g3, col_g4 = st.columns(2)
+
+    with col_g3:
+        st.subheader("📢 Top Campanhas")
+        df_camp = df['Campanha_Clean'].value_counts().head(10).reset_index()
+        df_camp.columns = ['Campanha', 'Leads']
+        fig_camp = px.bar(df_camp, x='Leads', y='Campanha', orientation='h')
+        fig_camp.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_camp, use_container_width=True)
+
+    with col_g4:
+        st.subheader("📍 Top Cidades")
+        df_city = df['Cidade_Clean'].value_counts().head(10).reset_index()
+        df_city.columns = ['Cidade', 'Leads']
+        fig_city = px.bar(df_city, x='Cidade', y='Leads', color_discrete_sequence=['#28B463'])
+        st.plotly_chart(fig_city, use_container_width=True)
+
+    # --- Tabela Detalhada ---
+    with st.expander("🔎 Ver Dados Brutos"):
+        st.dataframe(df)
+
+else:
+    st.info("Por favor, faça o upload do arquivo CSV para iniciar a análise.")
