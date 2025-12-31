@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # --- 1. Configuração da Página (DEVE ser o primeiro comando) ---
 st.set_page_config(page_title="Franquias BI", layout="wide")
 
-# --- CSS Customizado ---
+# --- CSS Customizado para Estilo ---
 st.markdown("""
 <style>
     .metric-card {
@@ -27,41 +27,60 @@ st.markdown("### Análise de Funil e Performance de Marketing")
 uploaded_file = st.sidebar.file_uploader("Carregar Base de Dados (CSV)", type=['csv'])
 
 if uploaded_file is not None:
-    # --- 2. Leitura Robusta do Arquivo (Correção do Erro de Parser) ---
+    # --- 2. Leitura Inteligente do Arquivo ---
     try:
-        # TENTATIVA 1: Padrão Brasileiro (Ponto e Vírgula)
-        uploaded_file.seek(0) # Garante que está no início do arquivo
+        # TENTATIVA 1: Separador Ponto e Vírgula (Padrão Excel BR)
+        uploaded_file.seek(0)
         df = pd.read_csv(uploaded_file, sep=';')
         
-        # Validação: Se criou apenas 1 coluna, provavelmente o separador está errado
+        # Correção para arquivos que começam com "sep=;"
+        # Se a primeira coluna contiver "sep=", recarrega pulando a primeira linha
+        if len(df.columns) > 0 and 'sep=' in str(df.columns[0]):
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, sep=';', skiprows=1)
+
+        # Validação: Se tiver poucas colunas, o separador pode estar errado
         if df.shape[1] < 2:
-            raise ValueError("Separador incorreto detectado")
+            raise ValueError("Tentando outro separador...")
             
     except Exception:
-        # TENTATIVA 2: Padrão Internacional (Vírgula)
-        uploaded_file.seek(0) # Reseta o ponteiro para o início (CRUCIAL)
-        df = pd.read_csv(uploaded_file, sep=',')
+        # TENTATIVA 2: Separador Vírgula (Padrão Internacional)
+        uploaded_file.seek(0)
+        try:
+            df = pd.read_csv(uploaded_file, sep=',')
+            # Mesma verificação do "sep=" para vírgula
+            if len(df.columns) > 0 and 'sep=' in str(df.columns[0]):
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, sep=',', skiprows=1)
+        except Exception as e:
+            st.error(f"Não foi possível ler o arquivo. Erro: {e}")
+            st.stop()
 
     # --- 3. Verificação de Colunas Obrigatórias ---
-    # Adapte esta lista conforme os nomes exatos do seu CSV
+    # Ajuste aqui se os nomes no seu CSV forem diferentes
     colunas_necessarias = ['Etapa', 'Estado'] 
     colunas_presentes = [c for c in colunas_necessarias if c in df.columns]
     
     if len(colunas_presentes) != len(colunas_necessarias):
-        st.error(f"O arquivo CSV precisa ter as colunas: {colunas_necessarias}. Colunas encontradas: {list(df.columns)}")
+        st.error(f"""
+        ❌ **Erro de Colunas:** O arquivo precisa ter as colunas: {colunas_necessarias}.
+        
+        **Colunas encontradas:** {list(df.columns)}
+        
+        *Dica: Verifique se o arquivo exportado possui cabeçalho.*
+        """)
         st.stop()
 
-    # --- 4. Limpeza e Tratamento (ETL) ---
+    # --- 4. Limpeza e Tratamento de Dados (ETL) ---
     
-    # Ordem Lógica do Funil
+    # Definição da Ordem Lógica do Funil
     ordem_funil = [
         'Aguardando Resposta', 'Confirmou Interesse', 'Qualificado', 
         'Reunião Agendada', 'Reunião Realizada', 'Follow-up', 'Venda/Fechamento'
     ]
-    # Filtra apenas etapas que existem no dataset
     etapas_existentes = [e for e in ordem_funil if e in df['Etapa'].unique()]
     
-    # Tratamento de Campanhas (Verifica qual coluna existe)
+    # Tratamento da Coluna de Campanha
     if 'Utm_campaign' in df.columns:
         df['Campanha_Clean'] = df['Utm_campaign'].fillna('Orgânico/Desconhecido')
     elif 'Campanha' in df.columns:
@@ -69,27 +88,22 @@ if uploaded_file is not None:
     else:
         df['Campanha_Clean'] = 'Não Identificado'
 
-    # Tratamento de Cidades
+    # Tratamento da Coluna de Cidade
     if 'Cidade Interesse' in df.columns:
         df['Cidade_Clean'] = df['Cidade Interesse'].astype(str).apply(
             lambda x: x.split('-')[0].split('(')[0].strip().title()
         )
-        df = df[df['Cidade_Clean'] != 'Nan'] # Remove strings NaN literais
+        df = df[df['Cidade_Clean'] != 'Nan']
     else:
         df['Cidade_Clean'] = 'Não Informado'
 
     # --- 5. Cálculo de KPIs ---
     total_leads = len(df)
-    # Verifica se existe coluna Estado para calcular ativos/perdidos
-    if 'Estado' in df.columns:
-        leads_ativos = len(df[~df['Estado'].astype(str).str.contains('Perdida', case=False, na=False)])
-        leads_perdidos = total_leads - leads_ativos
-        taxa_perda = (leads_perdidos / total_leads * 100) if total_leads > 0 else 0
-    else:
-        leads_ativos = total_leads
-        taxa_perda = 0
+    leads_ativos = len(df[~df['Estado'].astype(str).str.contains('Perdida', case=False, na=False)])
+    leads_perdidos = total_leads - leads_ativos
+    taxa_perda = (leads_perdidos / total_leads * 100) if total_leads > 0 else 0
 
-    # --- Exibição dos KPIs ---
+    # --- Exibição dos KPIs (Topo) ---
     col1, col2, col3 = st.columns(3)
     col1.metric("Total de Leads", f"{total_leads}")
     col2.metric("Leads Ativos", f"{leads_ativos}")
@@ -98,9 +112,9 @@ if uploaded_file is not None:
     st.markdown("---")
 
     # --- 6. Gráficos ---
-    
     col_g1, col_g2 = st.columns(2)
 
+    # Gráfico 1: Funil
     with col_g1:
         st.subheader("🔻 Funil de Vendas")
         if etapas_existentes:
@@ -111,22 +125,23 @@ if uploaded_file is not None:
         else:
             st.warning("As etapas do funil não correspondem à ordem configurada.")
 
+    # Gráfico 2: Motivos de Perda
     with col_g2:
         st.subheader("🚫 Motivos de Perda")
-        if 'Motivo de Perda' in df.columns and 'Estado' in df.columns:
+        if 'Motivo de Perda' in df.columns:
+            # Filtra apenas os perdidos para contar os motivos
             df_loss = df[df['Estado'] == 'Perdida']['Motivo de Perda'].value_counts().reset_index().head(10)
             df_loss.columns = ['Motivo', 'Quantidade']
+            
             fig_loss = px.bar(df_loss, x='Quantidade', y='Motivo', orientation='h', color='Quantidade', color_continuous_scale='Reds')
             fig_loss.update_layout(yaxis={'categoryorder':'total ascending'})
-            
-            # CORREÇÃO APLICADA AQUI:
             st.plotly_chart(fig_loss, use_container_width=True)
-            
         else:
-            st.info("Colunas 'Motivo de Perda' ou 'Estado' não encontradas.")
+            st.info("A coluna 'Motivo de Perda' não foi encontrada.")
 
     col_g3, col_g4 = st.columns(2)
 
+    # Gráfico 3: Campanhas
     with col_g3:
         st.subheader("📢 Top Campanhas")
         df_camp = df['Campanha_Clean'].value_counts().head(10).reset_index()
@@ -135,6 +150,7 @@ if uploaded_file is not None:
         fig_camp.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_camp, use_container_width=True)
 
+    # Gráfico 4: Cidades
     with col_g4:
         st.subheader("📍 Top Cidades")
         df_city = df['Cidade_Clean'].value_counts().head(10).reset_index()
@@ -142,9 +158,10 @@ if uploaded_file is not None:
         fig_city = px.bar(df_city, x='Cidade', y='Leads', color_discrete_sequence=['#28B463'])
         st.plotly_chart(fig_city, use_container_width=True)
 
-    # --- Tabela Detalhada ---
+    # --- Tabela Detalhada (Expansível) ---
     with st.expander("🔎 Ver Dados Brutos"):
         st.dataframe(df)
 
 else:
-    st.info("Por favor, faça o upload do arquivo CSV para iniciar a análise.")
+    # Mensagem Inicial
+    st.info("Por favor, faça o upload do arquivo CSV na barra lateral para iniciar a análise.")
