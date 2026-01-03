@@ -144,13 +144,32 @@ def dashboard(df):
               round(len(df[df["Status_Calc"] == "Ganho"]) / len(df) * 100, 1) if len(df) else 0)
 
     st.divider()
+    df_status = (
+    df["Status_Calc"]
+    .value_counts()
+    .reset_index()
+    .rename(columns={
+        "index": "Status",
+        "Status_Calc": "Quantidade"
+    })
+)
 
-    fig = px.bar(
-        df["Status_Calc"].value_counts().reset_index(),
-        x="index",
-        y="Status_Calc",
-        title="Status dos Leads"
-    )
+fig = px.bar(
+    df_status,
+    x="Status",
+    y="Quantidade",
+    title="Status dos Leads",
+    text="Quantidade"
+)
+
+fig.update_layout(
+    xaxis_title="Status",
+    yaxis_title="Qtd de Leads",
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)"
+)
+
+    
     st.plotly_chart(fig, use_container_width=True)
 
 # ===============================
