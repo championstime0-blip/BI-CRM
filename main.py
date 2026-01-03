@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-# =========================
+# =====================================================
 # CONFIG STREAMLIT
-# =========================
+# =====================================================
 st.set_page_config(
     page_title="BI Expansão Performance",
     page_icon="🚀",
@@ -27,9 +28,9 @@ html, body, [class*="css"] {
 
 st.title("🚀 BI Expansão Performance")
 
-# =========================
+# =====================================================
 # GOOGLE SHEETS AUTH
-# =========================
+# =====================================================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -42,73 +43,193 @@ creds = Credentials.from_service_account_file(
 
 gc = gspread.authorize(creds)
 
-SPREADSHEET_NAME = "BI_Historico"
-WORKSHEET_NAME = "HISTORICO_LEADS"
+SPREADSHEET = "BI_Historico"
+WORKSHEET = "HISTORICO_LEADS"
 
-# =========================
+# =====================================================
+# UTILIDADES
+# =====================================================
+FUNIL_ORDEM = [
+    "Sem resposta",
+    "Aguardando Resposta",
+    "Confirmou Interesse",
+    "Qualificado",
+    "Reunião Agendada",
+    "Reunião Realizada",
+    "Follow-up",
+    "Negociação",
+    "Em aprovação",
+    "Faturado"
+]
+
+SONDAGEM_COLS = [
+    "Atuação",
+    "Cidade Interesse",
+    "Prazo",
+    "Investimento",
+    "Capital de Investimento"
+]
+
+# =====================================================
 # FUNÇÕES DB
-# =========================
-def carregar_historico():
-    sh = gc.open(SPREADSHEET_NAME)
-    ws = sh.worksheet(WORKSHEET_NAME)
-
-    records = ws.get_all_records()
-    df = pd.DataFrame(records)
-
+# =====================================================
+def load_db():
+    sh = gc.open(SPREADSHEET)
+    ws = sh.worksheet(WORKSHEET)
+    data = ws.get_all_records()
+    df = pd.DataFrame(data)
     return df, ws
 
-def seed_inicial(ws):
-    linha_seed = [
+def seed_if_empty(ws):
+    ws.append_row([
         datetime.now().strftime("%Y-%m-%d"),
         "SEM1",
-        "EXEMPLO",
-        "Seed Inicial",
         "Seed",
-        "N/A",
+        "Sem resposta",
+        "Em Andamento",
+        "",
         "sistema",
-        "seed_auto",
+        "seed",
         "N/A"
-    ]
-    ws.append_row(linha_seed)
+    ])
 
-# =========================
-# MODOS
-# =========================
+# =====================================================
+# NORMALIZAÇÃO
+# =====================================================
+def normalize(df):
+    df.columns = df.columns.str.strip()
+
+    for col in df.columns:
+        df[col] = df[col].astype(str).str.strip()
+
+    # STATUS CALC
+    if "Status_Calc" not in df.columns:
+        df["Status_Calc"] = "Em Andamento"
+
+    df.loc[df["Etapa"].str.lower() == "faturado", "Status_Calc"] = "Ganho"
+    df.loc[
+        (df.get("Estado", "") == "Perdida") |
+        (df.get("Motivo de Perda", "") != ""),
+        "Status_Calc"
+    ] = "Perdido"
+
+    return df
+
+# =====================================================
+# KPIs
+# =====================================================
+def kpis(df):
+    total = len(df)
+    ganhos = (df["Status_Calc"] == "Ganho").sum()
+    perdas = (df["Status_Calc"] == "Perdido").sum()
+    conversao = (ganhos / total * 100) if total else 0
+    return total, ganhos, perdas, conversao
+
+# =====================================================
+# FUNIL
+# =====================================================
+def plot_funil(df):
+    etapas = []
+    valores = []
+
+    for etapa in FUNIL_ORDEM:
+        etapas.append(etapa)
+        valores.append((df["Etapa"] == etapa).sum())
+
+    fig = go.Figure(go.Funnel(
+        y=etapas,
+        x=valores,
+        textinfo="value+percent initial"
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="black",
+        plot_bgcolor="black",
+        font_color="white"
+    )
+
+    return fig
+
+# =====================================================
+# MOTIVOS DE PERDA
+# =====================================================
+def plot_motivos(df):
+    perdas = df[df["Status_Calc"] == "Perdido"]
+    motivos = perdas["Motivo de Perda"].value_counts()
+
+    fig = go.Figure(go.Bar(
+        x=motivos.values,
+        y=motivos.index,
+        orientation="h"
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="black",
+        plot_bgcolor="black",
+        font_color="white"
+    )
+
+    return fig
+
+# =====================================================
+# UI
+# =====================================================
 modo = st.radio(
     "Selecione o Modo:",
-    ["📥 Importar Planilha", "🗄️ Histórico Gerencial"],
+    ["📥 Importar Planilha", "📊 Dashboard BI"],
     horizontal=True
 )
 
-# =========================
-# HISTÓRICO GERENCIAL
-# =========================
-if modo == "🗄️ Histórico Gerencial":
+df_db, ws = load_db()
 
-    df_hist, ws = carregar_historico()
+if df_db.empty:
+    seed_if_empty(ws)
+    df_db, _ = load_db()
 
-    # 👉 SE SÓ TIVER CABEÇALHO, CRIA SEED
-    if df_hist.empty:
-        st.warning("Banco vazio detectado. Criando seed inicial automaticamente...")
-        seed_inicial(ws)
-        df_hist, _ = carregar_historico()
+df_db = normalize(df_db)
 
-    st.success("Banco de dados carregado com sucesso.")
+# =====================================================
+# IMPORTAÇÃO CSV
+# =====================================================
+if modo == "📥 Importar Planilha":
 
-    # KPIs
-    col1, col2, col3 = st.columns(3)
+    file = st.file_uploader("Upload CSV", type=["csv"])
 
-    col1.metric("Total de Registros", len(df_hist))
-    col2.metric("Marcas", df_hist["marca_ref"].nunique())
-    col3.metric("Semanas", df_hist["semana_ref"].nunique())
+    if file:
+        df_csv = pd.read_csv(file, sep=None, engine="python", encoding="utf-8-sig")
+        df_csv = normalize(df_csv)
+
+        # DEDUPLICAÇÃO
+        if "Telefone" in df_csv.columns:
+            df_csv = df_csv.drop_duplicates(subset=["Telefone"])
+
+        for _, row in df_csv.iterrows():
+            ws.append_row(row.tolist())
+
+        st.success("Importação concluída com sucesso!")
+
+# =====================================================
+# DASHBOARD BI
+# =====================================================
+else:
+    total, ganhos, perdas, conv = kpis(df_db)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Leads", total)
+    c2.metric("Ganhos", ganhos)
+    c3.metric("Perdas", perdas)
+    c4.metric("Conversão (%)", f"{conv:.2f}%")
 
     st.divider()
 
-    st.subheader("📊 Histórico Completo")
-    st.dataframe(df_hist, use_container_width=True)
+    st.plotly_chart(plot_funil(df_db), use_container_width=True)
 
-# =========================
-# IMPORTAÇÃO (PLACEHOLDER)
-# =========================
-else:
-    st.info("Modo Importar Planilha — em uso para alimentar o histórico.")
+    st.divider()
+
+    st.subheader("📉 Motivos de Perda")
+    st.plotly_chart(plot_motivos(df_db), use_container_width=True)
+
+    st.divider()
+
+    st.subheader("📄 Base Completa")
+    st.dataframe(df_db, use_container_width=True)
