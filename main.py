@@ -1,7 +1,3 @@
-# ===============================
-# BI EXPANSÃO – VERSÃO FINAL
-# ===============================
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -10,204 +6,204 @@ from datetime import datetime
 import json
 import os
 import io
-
 import gspread
-from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
 
-# ===============================
-# CONFIGURAÇÃO DA PÁGINA
-# ===============================
+# ================= CONFIG STREAMLIT =================
 st.set_page_config(
-    page_title="BI Expansão Corporativo",
+    page_title="BI Expansão Performance",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ===============================
-# ESTILO (FUNDO PRETO TOTAL)
-# ===============================
+# ================= CSS =================
 st.markdown("""
 <style>
-    body, .stApp {
-        background-color: #000000;
-        color: #ffffff;
-    }
+.stApp { background-color: #0e1117; color: #ffffff; }
+h1, h2, h3, h4 { color: #ffffff; }
 </style>
 """, unsafe_allow_html=True)
 
-# ===============================
-# GOOGLE SHEETS – CONEXÃO SEGURA
-# ===============================
+# ================= GOOGLE SHEETS =================
 def conectar_gsheets():
     try:
-        scopes = ["https://www.googleapis.com/auth/spreadsheets",
-                  "https://www.googleapis.com/auth/drive"]
+        scope = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive"
+        ]
 
-        if "CREDENCIAIS_GOOGLE" not in os.environ:
-            st.error("❌ Variável CREDENCIAIS_GOOGLE não encontrada no Render")
+        if "CREDENCIAIS_GOOGLE" in os.environ:
+            creds_dict = json.loads(os.environ["CREDENCIAIS_GOOGLE"])
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        else:
+            st.error("Variável CREDENCIAIS_GOOGLE não configurada.")
             return None
 
-        creds_dict = json.loads(os.environ["CREDENCIAIS_GOOGLE"])
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
-
-        sheet = client.open("BI_Historico")
-
-        try:
-            return sheet.worksheet("dados")
-        except:
-            ws = sheet.add_worksheet(title="dados", rows=1000, cols=50)
-            ws.append_row(["data_upload", "semana_ref", "marca_ref"])
-            return ws
+        return client.open("BI_Historico").sheet1
 
     except Exception as e:
         st.error(f"Erro Google Sheets: {e}")
         return None
 
-# ===============================
-# SALVAR HISTÓRICO
-# ===============================
 def salvar_no_gsheets(df, semana, marca):
-    ws = conectar_gsheets()
-    if ws is None or df.empty:
+    sheet = conectar_gsheets()
+    if sheet is None:
         return False
 
     df_save = df.copy()
-    df_save["data_upload"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     df_save["semana_ref"] = semana
     df_save["marca_ref"] = marca
+    df_save["data_upload"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    ws.append_rows(df_save.fillna("").astype(str).values.tolist())
+    sheet.append_rows(df_save.fillna("").astype(str).values.tolist())
     return True
 
-# ===============================
-# CARREGAR HISTÓRICO
-# ===============================
 def carregar_historico():
-    ws = conectar_gsheets()
-    if ws is None:
-        return pd.DataFrame()
-    return pd.DataFrame(ws.get_all_records())
+    sheet = conectar_gsheets()
+    if sheet:
+        return pd.DataFrame(sheet.get_all_records())
+    return pd.DataFrame()
 
-# ===============================
-# LEITURA CSV
-# ===============================
-def load_csv(file):
+# ================= LEITURA CSV =================
+def load_data(file):
     raw = file.getvalue()
-    for enc in ["utf-8-sig", "latin-1", "cp1252"]:
+    for enc in ["utf-8-sig", "latin-1", "iso-8859-1"]:
         try:
-            txt = raw.decode(enc)
-            sep = ";" if ";" in txt.splitlines()[0] else ","
-            return pd.read_csv(io.StringIO(txt), sep=sep)
+            text = raw.decode(enc)
+            sep = ";" if ";" in text.splitlines()[0] else ","
+            return pd.read_csv(io.StringIO(text), sep=sep)
         except:
             pass
     return pd.DataFrame()
 
-# ===============================
-# PROCESSAMENTO
-# ===============================
-def processar(df):
-    if df.empty:
-        return df
-
+# ================= PROCESSAMENTO =================
+def process_data(df):
     df.columns = [c.strip() for c in df.columns]
 
-    if "Etapa" not in df.columns:
-        df["Etapa"] = ""
+    col_data = next((c for c in df.columns if "data" in c.lower()), None)
+    if col_data:
+        df["Data_Criacao_DT"] = pd.to_datetime(df[col_data], errors="coerce", dayfirst=True)
 
-    if "Motivo de Perda" not in df.columns:
-        df["Motivo de Perda"] = ""
+    def status_calc(row):
+        etapa = str(row.get("Etapa", "")).lower()
+        motivo = str(row.get("Motivo de Perda", "")).strip().lower()
 
-    def status(row):
-        etapa = str(row["Etapa"]).lower()
-        motivo = str(row["Motivo de Perda"]).lower()
-
-        if any(x in etapa for x in ["venda", "fechamento", "ganho"]):
+        if "faturado" in etapa or "venda" in etapa:
             return "Ganho"
-        if motivo == "" or motivo == "nan":
-            return "Em Andamento"
-        return "Perdido"
+        if motivo not in ["", "nan", "-", "nada"]:
+            return "Perdido"
+        return "Em Andamento"
 
-    df["Status_Calc"] = df.apply(status, axis=1)
+    df["Status_Calc"] = df.apply(status_calc, axis=1)
     return df
 
-# ===============================
-# DASHBOARD
-# ===============================
+# ================= DASHBOARD =================
 def dashboard(df):
-    st.subheader("📊 Visão Geral")
+    st.title("🚀 BI Expansão – Performance")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Leads", len(df))
-    c2.metric("Vendas", len(df[df["Status_Calc"] == "Ganho"]))
-    c3.metric("Conversão %",
-              round(len(df[df["Status_Calc"] == "Ganho"]) / len(df) * 100, 1) if len(df) else 0)
+    total = len(df)
+    ganhos = len(df[df["Status_Calc"] == "Ganho"])
 
-    st.divider()
+    st.metric("Leads Totais", total)
+    st.metric("Vendas", ganhos)
+
+    # ===== GRÁFICO STATUS (CORRIGIDO) =====
     df_status = (
-    df["Status_Calc"]
-    .value_counts()
-    .reset_index()
-    .rename(columns={
-        "index": "Status",
-        "Status_Calc": "Quantidade"
-    })
-)
+        df["Status_Calc"]
+        .value_counts()
+        .reset_index()
+        .rename(columns={"index": "Status", "Status_Calc": "Quantidade"})
+    )
 
-fig = px.bar(
-    df_status,
-    x="Status",
-    y="Quantidade",
-    title="Status dos Leads",
-    text="Quantidade"
-)
+    fig_status = px.bar(
+        df_status,
+        x="Status",
+        y="Quantidade",
+        text="Quantidade",
+        title="Status dos Leads"
+    )
+    fig_status.update_layout(
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)"
+    )
 
-fig.update_layout(
-    xaxis_title="Status",
-    yaxis_title="Qtd de Leads",
-    plot_bgcolor="rgba(0,0,0,0)",
-    paper_bgcolor="rgba(0,0,0,0)"
-)
+    st.plotly_chart(fig_status, use_container_width=True)
 
-    
-    st.plotly_chart(fig, use_container_width=True)
+    # ===== FUNIL =====
+    ordem_funil = [
+        "Sem resposta",
+        "Aguardando Resposta",
+        "Confirmou Interesse",
+        "Qualificado",
+        "Reunião Agendada",
+        "Reunião Realizada",
+        "Em aprovação",
+        "Faturado"
+    ]
 
-# ===============================
-# INTERFACE
-# ===============================
-st.title("🚀 BI Expansão")
+    df_funil = (
+        df["Etapa"]
+        .value_counts()
+        .reindex(ordem_funil)
+        .fillna(0)
+        .reset_index()
+        .rename(columns={"index": "Etapa", "Etapa": "Quantidade"})
+    )
 
-modo = st.radio(
-    "Modo de operação",
-    ["📥 Importar CSV", "🗄️ Histórico"],
-    horizontal=True
-)
+    fig_funil = go.Figure(go.Funnel(
+        y=df_funil["Etapa"],
+        x=df_funil["Quantidade"],
+        textinfo="value+percent initial"
+    ))
 
-if modo == "📥 Importar CSV":
-    marca = st.sidebar.selectbox("Marca", ["Prepara", "Microlins", "Ensina Mais"])
-    semana = st.sidebar.selectbox("Semana", ["SEM1", "SEM2", "SEM3", "SEM4", "SEM5"])
-    file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+    fig_funil.update_layout(
+        title="Funil Comercial",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)"
+    )
 
+    st.plotly_chart(fig_funil, use_container_width=True)
+
+    # ===== MOTIVOS DE PERDA =====
+    df_loss = df[df["Status_Calc"] == "Perdido"]
+
+    if not df_loss.empty:
+        df_motivos = (
+            df_loss["Motivo de Perda"]
+            .value_counts()
+            .reset_index()
+            .rename(columns={"index": "Motivo", "Motivo de Perda": "Quantidade"})
+        )
+
+        fig_loss = px.bar(
+            df_motivos,
+            x="Quantidade",
+            y="Motivo",
+            orientation="h",
+            text="Quantidade",
+            title="Motivos de Perda"
+        )
+
+        fig_loss.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)"
+        )
+
+        st.plotly_chart(fig_loss, use_container_width=True)
+
+# ================= APP =================
+modo = st.radio("Modo:", ["Importar CSV", "Histórico"], horizontal=True)
+
+if modo == "Importar CSV":
+    file = st.file_uploader("Upload CSV", type="csv")
     if file:
-        df = processar(load_csv(file))
+        df = process_data(load_data(file))
         dashboard(df)
-
-        if st.sidebar.button("💾 Salvar no Banco"):
-            if salvar_no_gsheets(df, semana, marca):
-                st.sidebar.success("✅ Salvo com sucesso")
 
 else:
     df_hist = carregar_historico()
-
-    if df_hist.empty:
-        st.warning("Banco vazio")
-    else:
-        marca_f = st.sidebar.selectbox(
-            "Marca",
-            ["Todas"] + sorted(df_hist["marca_ref"].unique())
-        )
-
-        if marca_f != "Todas":
-            df_hist = df_hist[df_hist["marca_ref"] == marca_f]
-
+    if not df_hist.empty:
         dashboard(df_hist)
+    else:
+        st.warning("Histórico vazio.")
