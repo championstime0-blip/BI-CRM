@@ -1,112 +1,72 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime
-import gspread
-import os
 import json
+import os
+import gspread
 from google.oauth2.service_account import Credentials
 
-# =====================================================
+# ================================
 # CONFIG STREAMLIT
-# =====================================================
+# ================================
 st.set_page_config(
-    page_title="BI Expansão Performance",
-    page_icon="🚀",
+    page_title="BI-CRM Performance",
     layout="wide"
 )
 
-st.markdown("""
-<style>
-html, body, [class*="css"] {
-    background-color: #000000 !important;
-    color: #FFFFFF !important;
-}
-.stApp {
-    background-color: #000000;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.title("🚀 BI Expansão Performance")
-
-# =====================================================
-# GOOGLE SHEETS AUTH (ENV VAR)
-# =====================================================
+# ================================
+# AUTENTICAÇÃO GOOGLE SHEETS
+# ================================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-if "GOOGLE_SERVICE_ACCOUNT_JSON" not in os.environ:
-    st.error("Variável GOOGLE_SERVICE_ACCOUNT_JSON não configurada no ambiente.")
-    st.stop()
+@st.cache_resource
+def conectar_gsheets():
+    """
+    Conecta ao Google Sheets usando Service Account via variável de ambiente
+    """
+    if "GOOGLE_SERVICE_ACCOUNT_JSON" not in os.environ:
+        st.error("❌ Variável GOOGLE_SERVICE_ACCOUNT_JSON não configurada no Render.")
+        st.stop()
 
-service_account_info = json.loads(
-    os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-)
+    try:
+        creds_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+        creds = Credentials.from_service_account_info(
+            creds_info,
+            scopes=SCOPES
+        )
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        st.error("❌ Erro ao autenticar no Google Sheets")
+        st.exception(e)
+        st.stop()
 
-creds = Credentials.from_service_account_info(
-    service_account_info,
-    scopes=SCOPES
-)
+def carregar_planilha(nome_planilha: str, aba: str):
+    client = conectar_gsheets()
+    sheet = client.open(nome_planilha).worksheet(aba)
+    data = sheet.get_all_records()
+    return pd.DataFrame(data)
 
-gc = gspread.authorize(creds)
+def salvar_planilha(nome_planilha: str, aba: str, df: pd.DataFrame):
+    client = conectar_gsheets()
+    sheet = client.open(nome_planilha).worksheet(aba)
+    sheet.append_rows(df.fillna("").astype(str).values.tolist())
 
-SPREADSHEET = "BI_Historico"
-WORKSHEET = "HISTORICO_LEADS"
+# ================================
+# EXEMPLO DE USO
+# ================================
+st.title("📊 BI-CRM Performance")
 
-# =====================================================
-# FUNÇÕES DB
-# =====================================================
-def load_db():
-    sh = gc.open(SPREADSHEET)
-    ws = sh.worksheet(WORKSHEET)
-    data = ws.get_all_records()
-    df = pd.DataFrame(data)
-    return df, ws
+if st.button("🔄 Carregar Histórico"):
+    df = carregar_planilha("BI_Historico", "base")
+    st.dataframe(df, use_container_width=True)
 
-def seed_if_empty(ws):
-    ws.append_row([
-        datetime.now().strftime("%Y-%m-%d"),
-        "SEM1",
-        "Seed",
-        "Sem resposta",
-        "Em Andamento",
-        "",
-        "sistema",
-        "seed",
-        "N/A"
+if st.button("💾 Salvar Exemplo"):
+    exemplo = pd.DataFrame([
+        {"lead": "João", "status": "Ganho"},
+        {"lead": "Maria", "status": "Perdido"}
     ])
-
-# =====================================================
-# NORMALIZAÇÃO
-# =====================================================
-def normalize(df):
-    if df.empty:
-        return df
-
-    df.columns = df.columns.str.strip()
-
-    for col in df.columns:
-        df[col] = df[col].astype(str).str.strip()
-
-    if "Status_Calc" not in df.columns:
-        df["Status_Calc"] = "Em Andamento"
-
-    df.loc[df["Etapa"].str.lower() == "faturado", "Status_Calc"] = "Ganho"
-    df.loc[df.get("Motivo de Perda", "") != "", "Status_Calc"] = "Perdido"
-
-    return df
-
-# =====================================================
-# KPIs
-# =====================================================
-def kpis(df):
-    total = len(df)
-    ganhos = (df["Status_Calc"] == "Ganho").sum()
-    perdas = (df["Status_Calc"] == "Perdido").sum()
-    conversao = (ganhos / total * 100) if total else 0
-    return total, ganhos, perdas, conversao
-
-# =====================================================
+    salvar_planilha("BI_Historico", "base", exemplo)
+    st.success("Dados salvos com sucesso ✅")
