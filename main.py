@@ -58,6 +58,10 @@ def salvar_no_gsheets(df, semana, marca):
     sheet = conectar_gsheets()
     if sheet:
         try:
+            # Garante que as colunas calculadas existam antes de salvar
+            if 'Status_Calc' not in df.columns:
+                df = process_data(df)
+
             cols_save = ['Etapa', 'Status_Calc', 'Cidade_Clean', 'Motivo de Perda']
             if 'Fonte' not in df.columns: df['Fonte'] = '-'
             if 'Campanha' not in df.columns: df['Campanha'] = '-'
@@ -82,7 +86,10 @@ def carregar_historico_gsheets():
     if sheet:
         try:
             data = sheet.get_all_records()
-            return pd.DataFrame(data)
+            df = pd.DataFrame(data)
+            # Normaliza nomes de colunas do GSheets para evitar erros de espaço
+            df.columns = [c.strip() for c in df.columns]
+            return df
         except:
             return pd.DataFrame()
     return pd.DataFrame()
@@ -97,7 +104,6 @@ def limpar_historico_gsheets():
 @st.cache_data(show_spinner=False)
 def load_data(file):
     try:
-        # Detecta o separador automaticamente (CSV do Pedro usa ;)
         raw_bytes = file.getvalue()
         content = raw_bytes.decode('utf-8-sig')
         sep = ';' if ';' in content.splitlines()[0] else ','
@@ -107,42 +113,49 @@ def load_data(file):
         return pd.DataFrame()
 
 def process_data(df):
-    # Padronização de Colunas
+    if df.empty: return df
     df.columns = [c.strip() for c in df.columns]
     
-    # Datas
-    possiveis_criacao = ['Data de criação', 'Created at', 'Data Criação', 'Data']
-    col_criacao = next((c for c in df.columns if c in possiveis_criacao), None)
-    if col_criacao:
-        df['Data_Criacao_DT'] = pd.to_datetime(df[col_criacao], dayfirst=True, errors='coerce')
-    else:
-        df['Data_Criacao_DT'] = pd.NaT
-
-    # Cidade
-    if 'Cidade Interesse' in df.columns:
-        df['Cidade_Clean'] = df['Cidade Interesse'].astype(str).apply(lambda x: x.split('-')[0].split('(')[0].strip().title())
-        df = df[df['Cidade_Clean'] != 'Nan']
-    else: df['Cidade_Clean'] = 'Não Informado'
-    
-    # Lógica de Status
+    # Lógica de Status (A Regra de Ouro)
     def deduzir_status(row):
         raw_motivo = str(row.get('Motivo de Perda', ''))
         motivo = raw_motivo.strip().lower() 
         etapa = str(row.get('Etapa', '')).lower()
-        # No Pedro.csv, o estado 'Perdida' também ajuda
         estado = str(row.get('Estado', '')).lower()
         
         if any(x in etapa for x in ['venda', 'fechamento', 'matricula']): return 'Ganho'
         if estado == 'perdida' or (motivo != 'nan' and motivo != '' and motivo != 'nada'): return 'Perdido'
         return 'Em Andamento'
 
-    df['Status_Calc'] = df.apply(deduzir_status, axis=1)
+    if 'Status_Calc' not in df.columns:
+        df['Status_Calc'] = df.apply(deduzir_status, axis=1)
+    
+    # Datas
+    possiveis_criacao = ['Data de criação', 'Created at', 'Data Criação', 'Data']
+    col_criacao = next((c for c in df.columns if c in possiveis_criacao), None)
+    if col_criacao and col_criacao in df.columns:
+        df['Data_Criacao_DT'] = pd.to_datetime(df[col_criacao], dayfirst=True, errors='coerce')
+
+    # Cidade
+    if 'Cidade Interesse' in df.columns:
+        df['Cidade_Clean'] = df['Cidade Interesse'].astype(str).apply(lambda x: x.split('-')[0].split('(')[0].strip().title())
+    else:
+        df['Cidade_Clean'] = 'Não Informado'
+        
     return df
 
 # ==============================================================================
 # 3. MOTOR DE VISUALIZAÇÃO UNIFICADO
 # ==============================================================================
 def renderizar_dashboard_completo(df, titulo_recorte="Recorte de Dados"):
+    if df.empty:
+        st.info("Nenhum dado disponível para exibir.")
+        return
+
+    # --- CORREÇÃO DO KEYERROR: Garante que Status_Calc exista mesmo no Histórico ---
+    if 'Status_Calc' not in df.columns:
+        df = process_data(df)
+
     total = len(df)
     vendas = len(df[df['Status_Calc'] == 'Ganho'])
     perdidos = len(df[df['Status_Calc'] == 'Perdido'])
@@ -195,52 +208,4 @@ def renderizar_dashboard_completo(df, titulo_recorte="Recorte de Dados"):
         if 'Motivo de Perda' in df.columns:
             df_lost = df[df['Status_Calc'] == 'Perdido'].copy()
             if not df_lost.empty:
-                # Regra: Sem Resposta só conta se Etapa for inicial
-                mask = (df_lost['Motivo de Perda'] != 'Sem Resposta') | (df_lost['Etapa'] == 'Aguardando Resposta')
-                df_l = df_lost[mask]
-                motivos = df_l['Motivo de Perda'].value_counts().reset_index()
-                motivos.columns = ['Motivo', 'Qtd']
-                st.plotly_chart(px.bar(motivos, x='Qtd', y='Motivo', orientation='h', text='Qtd'), use_container_width=True)
-
-# ==============================================================================
-# 4. INTERFACE PRINCIPAL
-# ==============================================================================
-st.title("📊 BI Corporativo Expansão")
-modo_view = st.radio("Modo:", ["📥 Importar Planilha", "🗄️ Histórico Gerencial"], horizontal=True)
-st.divider()
-
-if modo_view == "📥 Importar Planilha":
-    marca_selecionada = st.sidebar.selectbox("Consultor/Marca:", ["Selecione...", "Prepara IA", "Microlins", "Ensina Mais TM Pedro", "Ensina Mais TM Luciana"])
-    
-    if marca_selecionada != "Selecione...":
-        uploaded_file = st.sidebar.file_uploader("Subir Pedro.csv", type=['csv'])
-        if uploaded_file:
-            df = process_data(load_data(uploaded_file))
-            
-            # Filtro de Responsável
-            col_resp = next((c for c in df.columns if c in ['Responsável', 'Proprietário']), None)
-            if col_resp:
-                termo = marca_selecionada.split(' ')[-1]
-                df = df[df[col_resp].astype(str).str.contains(termo, case=False, na=False)]
-
-            semana = st.sidebar.selectbox("Semana:", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5"])
-            if st.sidebar.button("💾 Salvar no Google Sheets"):
-                if salvar_no_gsheets(df, semana, marca_selecionada):
-                    st.sidebar.success("✅ Salvo!")
-
-            renderizar_dashboard_completo(df)
-
-elif modo_view == "🗄️ Histórico Gerencial":
-    df_hist = carregar_historico_gsheets()
-    if not df_hist.empty:
-        f_marca = st.sidebar.selectbox("Marca:", ["Todas"] + sorted(list(df_hist['marca_ref'].unique())))
-        f_semana = st.sidebar.selectbox("Semana:", ["Todas"] + sorted(list(df_hist['semana_ref'].unique())))
-        
-        df_v = df_hist.copy()
-        if f_marca != "Todas": df_v = df_v[df_v['marca_ref'] == f_marca]
-        if f_semana != "Todas": df_v = df_v[df_v['semana_ref'] == f_semana]
-        
-        renderizar_dashboard_completo(df_v, f"Histórico: {f_marca}")
-        
-        if st.sidebar.button("⚠️ Limpar Tudo"):
-            if limpar_historico_gsheets(): st.rerun()
+                mask = (df_lost['Motivo de Perda'] != 'Sem Res
