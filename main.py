@@ -58,9 +58,6 @@ def carregar_historico_gsheets():
         if not df.empty:
             mapa = {'status': 'Status_Calc', 'etapa': 'Etapa', 'cidade': 'Cidade_Clean', 'motivo_perda': 'Motivo de Perda'}
             df.rename(columns=mapa, inplace=True)
-            required = ['Status_Calc', 'Etapa', 'Motivo de Perda', 'data_upload']
-            for col in required:
-                if col not in df.columns: df[col] = 'Não Informado'
         return df
     return pd.DataFrame()
 
@@ -79,29 +76,36 @@ def deletar_semana_especifica(marca, ano, mes_num, semana):
     return False
 
 # ==============================================================================
-# 2. MOTOR DE VISUALIZAÇÃO (FUNIL TOTALIZADOR)
+# 2. MOTOR DE VISUALIZAÇÃO (FUNIL TOTALIZADOR + SEMÁFORO)
 # ==============================================================================
-def renderizar_dashboard_pro(df_atual, df_anterior=pd.DataFrame(), titulo="BI"):
+def renderizar_dashboard_pro(df_atual, titulo="BI"):
     total_leads = len(df_atual)
     vendas = len(df_atual[df_atual['Status_Calc'] == 'Ganho'])
     conv_total = (vendas / total_leads * 100) if total_leads > 0 else 0
     
     st.markdown(f"### {titulo}")
     
-    # KPIs principais
+    # --- LÓGICA DO SEMÁFORO ---
+    if conv_total < 3: color_label = "inverse" # Vermelho
+    elif conv_total < 7: color_label = "off" # Amarelo/Cinza
+    else: color_label = "normal" # Verde
+    
     c1, c2, c3 = st.columns(3)
     c1.metric("Volume de Leads", total_leads)
-    c2.metric("Conversão Geral", f"{conv_total:.1f}%")
-    c3.metric("Ticket Médio (Estimado)", "R$ --") # Placeholder para futura integração
+    c2.metric("Conversão Geral", f"{conv_total:.1f}%", delta="Performance", delta_color=color_label)
+    
+    # Cálculo de Avanço de Funil (Leads que passaram da primeira etapa)
+    avanco = (len(df_atual[df_atual['Etapa'] != 'Aguardando Resposta']) / total_leads * 100) if total_leads > 0 else 0
+    c3.metric("Aproveitamento de Base", f"{avanco:.1f}%")
     
     st.divider()
 
-    tab1, tab2 = st.tabs(["📉 Funil Profissional (% Total)", "🚫 Motivos de Perda"])
+    tab1, tab2 = st.tabs(["📉 Funil de Impacto (% Total)", "🚫 Motivos de Perda"])
 
     with tab1:
-        st.subheader("Funil de Impacto sobre Leads Totais")
+        st.subheader("Funil de Conversão Profissional")
         if 'Etapa' in df_atual.columns:
-            # Agrupa e ordena
+            # Agrupa e ordena conforme o fluxo comercial
             df_funil = df_atual['Etapa'].value_counts().reset_index()
             df_funil.columns = ['Etapa', 'Volume']
             ordem = ['Aguardando Resposta', 'Confirmou Interesse', 'Qualificado', 'Reunião Agendada', 'Reunião Realizada', 'Venda/Fechamento']
@@ -110,19 +114,14 @@ def renderizar_dashboard_pro(df_atual, df_anterior=pd.DataFrame(), titulo="BI"):
             df_funil.set_index('Etapa', inplace=True)
             df_funil = df_funil.reindex(existentes).reset_index()
 
-            # Cálculo do percentual em relação ao TOTAL de leads
-            df_funil['Percentual_Total'] = df_funil['Volume'].apply(lambda x: (x / total_leads * 100) if total_leads > 0 else 0)
-            
-            # Formatação de texto para o gráfico: "Volume (Percentual%)"
-            df_funil['Texto_Label'] = df_funil.apply(lambda row: f"{row['Volume']} ({row['Percentual_Total']:.1f}%)", axis=1)
+            # Texto customizado: Quantidade + % do Total
+            df_funil['Texto_Label'] = df_funil.apply(lambda r: f"{r['Volume']} ({ (r['Volume']/total_leads*100):.1f}%)", axis=1)
 
-            # Criando o Funil Profissional
             fig_funnel = go.Figure(go.Funnel(
                 y = df_funil['Etapa'],
                 x = df_funil['Volume'],
                 text = df_funil['Texto_Label'],
-                textinfo = "text", # Força a exibir nosso label personalizado
-                hoverinfo = "y+x+percent initial+percent previous",
+                textinfo = "text",
                 marker = {"color": ["#3498db", "#2980b9", "#1abc9c", "#16a085", "#2ecc71", "#27ae60"]},
                 connector = {"line": {"color": "#444", "dash": "dot", "width": 1}}
             ))
@@ -130,25 +129,31 @@ def renderizar_dashboard_pro(df_atual, df_anterior=pd.DataFrame(), titulo="BI"):
             fig_funnel.update_layout(
                 margin=dict(l=150, r=20, t=20, b=20),
                 height=450,
-                yaxis={'categoryorder':'manual', 'categoryarray':existentes[::-1]}
+                # CORREÇÃO DO ERRO: categoryorder agora é 'array'
+                yaxis={'categoryorder':'array', 'categoryarray':existentes[::-1]}
             )
             
             st.plotly_chart(fig_funnel, use_container_width=True)
-            st.info(f"💡 Todas as porcentagens acima são relativas ao volume total de **{total_leads} leads**.")
+            st.caption(f"ℹ️ Porcentagens calculadas sobre o total de {total_leads} leads.")
 
     with tab2:
         df_lost = df_atual[df_atual['Status_Calc'] == 'Perdido']
         if not df_lost.empty:
             motivos = df_lost['Motivo de Perda'].value_counts().reset_index()
             motivos.columns = ['Motivo', 'Qtd']
-            motivos['Percent_Global'] = motivos['Qtd'].apply(lambda x: (x/total_leads*100))
-            fig = px.bar(motivos, x='Qtd', y='Motivo', orientation='h', text=motivos['Percent_Global'].apply(lambda x: f"{x:.1f}% do total"))
+            motivos['Percent_Total'] = motivos['Qtd'].apply(lambda x: (x/total_leads*100))
+            
+            fig = px.bar(motivos, x='Qtd', y='Motivo', orientation='h', 
+                         text=motivos['Percent_Total'].apply(lambda x: f"{x:.1f}% do total"),
+                         title="Impacto das Perdas no Volume Total")
             st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.success("Excelente! Sem perdas registradas neste período.")
 
 # ==============================================================================
 # 3. INTERFACE E NAVEGAÇÃO
 # ==============================================================================
-st.title("🚀 BI Alta Performance v7.0")
+st.title("🚀 BI Alta Performance v7.1")
 modo = st.radio("Selecione:", ["📥 Importar Planilha", "🗄️ Histórico & Comparativo"], horizontal=True)
 
 if modo == "📥 Importar Planilha":
@@ -156,39 +161,44 @@ if modo == "📥 Importar Planilha":
     if marca != "Selecione...":
         file = st.sidebar.file_uploader("Subir CSV", type='csv')
         if file:
-            df_raw = pd.read_csv(file, sep=None, engine='python')
-            
-            # Lógica de processamento básica para o upload
-            def quick_proc(df):
-                # Status inteligente
-                def get_status(row):
+            # Carregamento robusto
+            try:
+                df_raw = pd.read_csv(file, sep=None, engine='python', on_bad_lines='skip')
+                
+                # Processamento de Status
+                def process_status(row):
                     etapa = str(row.get('Etapa', '')).lower()
                     motivo = str(row.get('Motivo de Perda', '')).lower()
-                    if 'venda' in etapa or 'fechamento' in etapa: return 'Ganho'
-                    if motivo in ['nan', '', 'none', '-'] or 'nada' in motivo: return 'Em Andamento'
+                    if 'venda' in etapa or 'fechamento' in etapa or 'matrícula' in etapa: return 'Ganho'
+                    if motivo in ['nan', '', 'none', '-', 'null'] or 'nada' in motivo: return 'Em Andamento'
                     return 'Perdido'
-                df['Status_Calc'] = df.apply(get_status, axis=1)
-                return df
-            
-            df_proc = quick_proc(df_raw)
-            
-            # Filtro de marca no upload
-            col_resp = next((c for c in df_proc.columns if c in ['Proprietário', 'Responsável', 'Consultor']), None)
-            if marca != "Todas as Marcas" and col_resp:
-                termo = marca.split(' ')[-1]
-                df_proc = df_proc[df_proc[col_resp].astype(str).str.contains(termo, case=False, na=False)]
+                
+                df_raw['Status_Calc'] = df_raw.apply(process_status, axis=1)
+                
+                # Filtro de Unidade
+                df_f = df_raw.copy()
+                col_resp = next((c for c in df_f.columns if c in ['Proprietário', 'Responsável', 'Consultor', 'Dono do lead']), None)
+                if marca != "Todas as Marcas" and col_resp:
+                    termo = marca.split(' ')[-1]
+                    df_f = df_f[df_f[col_resp].astype(str).str.contains(termo, case=False, na=False)]
 
-            sem = st.sidebar.selectbox("Semana:", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5"])
-            if st.sidebar.button("💾 Enviar p/ Google Sheets"):
-                if salvar_no_gsheets(df_proc, sem, marca): st.sidebar.success("✅ Sucesso!")
-
-            renderizar_dashboard_pro(df_proc, titulo=f"Preview: {marca}")
+                st.sidebar.divider()
+                sem = st.sidebar.selectbox("Semana para Salvar:", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5"])
+                if st.sidebar.button("💾 Enviar p/ Google Sheets"):
+                    if salvar_no_gsheets(df_f, sem, marca):
+                        st.sidebar.success(f"✅ {marca} Salvo!")
+                
+                renderizar_dashboard_pro(df_f, titulo=f"Preview Atual: {marca}")
+            except Exception as e:
+                st.error(f"Erro ao processar arquivo: {e}")
 
 elif modo == "🗄️ Histórico & Comparativo":
     df_h = carregar_historico_gsheets()
-    if df_h.empty: st.info("O banco de dados está vazio.")
+    if df_h.empty: 
+        st.info("O banco de dados está vazio. Importe uma planilha primeiro.")
     else:
-        df_h['dt'] = pd.to_datetime(df_h['data_upload'])
+        # Preparação de Filtros
+        df_h['dt'] = pd.to_datetime(df_h['data_upload'], errors='coerce')
         df_h['Ano'] = df_h['dt'].dt.year
         df_h['M_N'] = df_h['dt'].dt.month
         ms = {1:'Jan', 2:'Fev', 3:'Mar', 4:'Abr', 5:'Mai', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Set', 10:'Out', 11:'Nov', 12:'Dez'}
@@ -204,19 +214,19 @@ elif modo == "🗄️ Histórico & Comparativo":
         df_mes = df_a[df_a['M_N'] == m_num]
         
         sem_list = sorted(df_mes['semana_ref'].unique())
-        sem_sel = st.sidebar.selectbox("Semana:", sem_list, index=len(sem_list)-1)
+        sem_sel = st.sidebar.selectbox("Semana Analisada:", sem_list, index=len(sem_list)-1)
         
-        df_atual = df_mes[df_mes['semana_ref'] == sem_sel]
+        df_view = df_mes[df_mes['semana_ref'] == sem_sel]
         
-        renderizar_dashboard_pro(df_atual, titulo=f"Análise Gerencial: {m_sel}")
+        renderizar_dashboard_pro(df_view, titulo=f"Gerencial: {m_sel} ({sem_sel})")
 
-        # --- SISTEMA DE LIMPEZA SELETIVA ---
+        # --- EXCLUSÃO SEGURA ---
         st.sidebar.divider()
-        st.sidebar.subheader("🗑️ Gerenciar Dados")
+        st.sidebar.subheader("🗑️ Gerenciar")
         if st.sidebar.button(f"Excluir {sem_sel}"):
-            st.sidebar.warning("Confirme a exclusão:")
-            if st.sidebar.checkbox("Sim, apagar esta semana."):
+            st.sidebar.error("Confirme no campo abaixo:")
+            if st.sidebar.checkbox("Sim, apagar estes dados permanentemente."):
                 if deletar_semana_especifica(m_sel, a_sel, m_num, sem_sel):
-                    st.sidebar.success("Apagado!")
+                    st.sidebar.success("Excluído!")
                     time.sleep(1)
                     st.rerun()
