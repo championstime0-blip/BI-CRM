@@ -3,9 +3,10 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import time
+import sqlite3 # Biblioteca nativa para Banco de Dados
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="BI Multi-Marcas", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="BI Multi-Marcas SQL", layout="wide", initial_sidebar_state="expanded")
 
 # --- ESTILIZAÇÃO CSS ---
 st.markdown("""
@@ -19,10 +20,64 @@ st.markdown("""
         padding: 15px;
         border-radius: 8px;
     }
+    .success-box {
+        padding: 1rem;
+        background-color: #d4edda;
+        color: #155724;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES DE BANCO DE DADOS (NOVO) ---
+def init_db():
+    """Cria a tabela se ela não existir"""
+    conn = sqlite3.connect('bi_historico.db')
+    c = conn.cursor()
+    # Cria uma tabela que guarda todos os campos mais a Semana e a Marca
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS historico_leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data_upload TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            semana_ref TEXT,
+            marca_ref TEXT,
+            etapa TEXT,
+            status TEXT,
+            cidade TEXT,
+            motivo_perda TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def salvar_no_banco(df, semana, marca):
+    """Salva o resumo dos dados atuais no banco"""
+    conn = sqlite3.connect('bi_historico.db')
+    
+    # Prepara o DataFrame para salvar (seleciona colunas úteis)
+    # Adiciona as colunas de referência
+    df_save = df[['Etapa', 'Status_Calc', 'Cidade_Clean', 'Motivo de Perda']].copy()
+    df_save['semana_ref'] = semana
+    df_save['marca_ref'] = marca
+    
+    # Renomeia para bater com o banco
+    df_save.rename(columns={
+        'Status_Calc': 'status', 
+        'Cidade_Clean': 'cidade', 
+        'Motivo de Perda': 'motivo_perda',
+        'Etapa': 'etapa'
+    }, inplace=True)
+    
+    # Salva (Append adiciona sem apagar o anterior)
+    df_save.to_sql('historico_leads', conn, if_exists='append', index=False)
+    conn.close()
+    return True
+
+# Inicializa o banco ao abrir o app
+init_db()
+
+# --- FUNÇÕES DE DADOS ---
 @st.cache_data(show_spinner=False)
 def load_data(file):
     try:
@@ -41,7 +96,7 @@ def load_data(file):
     return df
 
 def process_data(df):
-    # 1. Datas
+    # Datas
     col_criacao = None
     col_fechamento = None
     possiveis_criacao = ['Data de criação', 'Created at', 'Data Criação', 'Data']
@@ -61,54 +116,56 @@ def process_data(df):
     else:
         df['Data_Fechamento_DT'] = pd.NaT
 
-    # 2. Cidades
+    # Cidades
     if 'Cidade Interesse' in df.columns:
         df['Cidade_Clean'] = df['Cidade Interesse'].astype(str).apply(lambda x: x.split('-')[0].split('(')[0].strip().title())
         df = df[df['Cidade_Clean'] != 'Nan']
     else: df['Cidade_Clean'] = 'Não Informado'
     
-    # --- 3. STATUS INTELIGENTE (NOVA REGRA DO "NADA") ---
+    # Status Inteligente (Regra do Nada)
     def deduzir_status(row):
-        # Limpeza do motivo
         raw_motivo = str(row.get('Motivo de Perda', ''))
         motivo = raw_motivo.strip().lower() 
-        
-        # 1. Checa se é venda primeiro (Prioridade Máxima)
         etapa = str(row.get('Etapa', '')).lower()
-        if 'venda' in etapa or 'fechamento' in etapa or 'matricula' in etapa: 
-            return 'Ganho'
-
-        # Lista de valores que consideramos "Vazio/Em Andamento"
-        valores_vazios = ['nan', 'nat', 'none', '', '-', 'null']
         
-        # 2. Regra do "Nada" ou Vazio -> EM ANDAMENTO
-        # Se contiver a palavra "nada" OU estiver na lista de vazios
-        if 'nada' in motivo or motivo in valores_vazios:
-            return 'Em Andamento'
+        if 'venda' in etapa or 'fechamento' in etapa or 'matricula' in etapa: return 'Ganho'
+        
+        valores_vazios = ['nan', 'nat', 'none', '', '-', 'null']
+        if 'nada' in motivo or motivo in valores_vazios: return 'Em Andamento'
             
-        # 3. Se sobrou texto e não é "nada" -> PERDIDO
         return 'Perdido'
 
     df['Status_Calc'] = df.apply(deduzir_status, axis=1)
     return df
 
 # --- INTERFACE ---
-st.title("📊 BI Corporativo - Gestão de Marcas")
+st.title("📊 BI Corporativo - Gestão & Banco de Dados")
 
-st.sidebar.header("🎯 Configuração da Análise")
+# --- 1. TRAVA LÓGICA (PRÉ-REQUISITO) ---
+st.sidebar.header("1º Configuração Inicial")
+
 opcoes_marca = [
+    "Selecione...", # Opção travada
     "Todas as Marcas",
     "Prepara IA", 
     "Microlins", 
     "Ensina Mais TM Pedro", 
     "Ensina Mais TM Luciana"
 ]
-marca_selecionada = st.sidebar.selectbox("1º Selecione a Operação:", opcoes_marca)
+marca_selecionada = st.sidebar.selectbox("Operação/Consultor:", opcoes_marca)
+
+# SE A MARCA NÃO FOR SELECIONADA, PARA TUDO AQUI
+if marca_selecionada == "Selecione...":
+    st.info("👋 Para começar, selecione uma **Operação** ou **Consultor** na barra lateral.")
+    st.stop() # Interrompe o código aqui
+
+# --- 2. UPLOAD (SÓ APARECE SE PASSAR DA TRAVA) ---
 st.sidebar.divider()
-uploaded_file = st.sidebar.file_uploader("2º Carregar Planilha CSV", type=['csv'])
+st.sidebar.header("2º Importação")
+uploaded_file = st.sidebar.file_uploader("Carregar Planilha CSV", type=['csv'])
 
 if uploaded_file is not None:
-    with st.status("Processando dados...", expanded=True) as status:
+    with st.status("Processando inteligência...", expanded=True) as status:
         df_raw = load_data(uploaded_file)
         df = process_data(df_raw)
         
@@ -129,27 +186,40 @@ if uploaded_file is not None:
                 if not matches.empty:
                     df_filtered = matches
         
-        status.update(label="Pronto!", state="complete", expanded=False)
+        status.update(label="Análise Concluída!", state="complete", expanded=False)
 
     if 'Etapa' not in df.columns:
         st.error("Erro: Coluna 'Etapa' não encontrada.")
         st.stop()
 
+    # --- 3. INTEGRAÇÃO COM BANCO DE DADOS (SIDEBAR) ---
+    st.sidebar.divider()
+    st.sidebar.header("💾 Salvar Histórico")
+    st.sidebar.info("Armazene os dados atuais no banco de dados para análise futura.")
+    
+    semana_ref = st.sidebar.selectbox("Semana de Referência:", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5"])
+    
+    if st.sidebar.button("💾 Gravar no Banco de Dados"):
+        try:
+            # Salva apenas os dados filtrados (do consultor selecionado)
+            salvar_no_banco(df_filtered, semana_ref, marca_selecionada)
+            st.sidebar.success(f"Dados de {marca_selecionada} ({semana_ref}) salvos com sucesso!")
+            time.sleep(2) # Pausa para ver a mensagem
+        except Exception as e:
+            st.sidebar.error(f"Erro ao salvar: {e}")
+
+    # --- VISUALIZAÇÃO (DASHBOARD) ---
+    
     # Recorte
     if pd.notna(df_filtered['Data_Criacao_DT']).any():
         d_min = df_filtered['Data_Criacao_DT'].min()
         d_max = df_filtered['Data_Criacao_DT'].max()
         st.markdown(f"**📅 Recorte Analisado:** de {d_min.strftime('%d/%m')} a {d_max.strftime('%d/%m')}")
 
-    # Totais
     total = len(df_filtered)
     vendas = len(df_filtered[df_filtered['Status_Calc'] == 'Ganho'])
     perdidos = len(df_filtered[df_filtered['Status_Calc'] == 'Perdido'])
-    
-    # Em Andamento (calculado pela nova lógica)
     em_andamento = len(df_filtered[df_filtered['Status_Calc'] == 'Em Andamento'])
-    
-    # Conversão
     conversao = (vendas / total * 100) if total > 0 else 0
 
     st.divider()
@@ -198,7 +268,6 @@ if uploaded_file is not None:
         df_funil['Etapa'] = pd.Categorical(df_funil['Etapa'], categories=[c for c in ordem_ideal if c in df_funil['Etapa'].values], ordered=True)
         df_funil = df_funil.sort_values('Etapa')
         
-        # Funil limpo (1 número)
         fig_funnel = px.funnel(df_funil, x='Volume', y='Etapa')
         fig_funnel.update_traces(texttemplate='%{value}', textposition='inside')
         st.plotly_chart(fig_funnel, use_container_width=True)
@@ -231,5 +300,3 @@ if uploaded_file is not None:
                 st.success("Sem perdas registradas.")
         else:
             st.warning("Coluna 'Motivo de Perda' não encontrada.")
-else:
-    st.info("👈 Selecione a Operação e faça o Upload do CSV na barra lateral.")
