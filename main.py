@@ -1,20 +1,43 @@
-# ===== MOTIVOS DE PERDA =====
-perdas = df[df["Status_Calc"] == "Perdido"]
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import json
+import os
+import io
+import gspread
+from datetime import datetime
+from oauth2client.service_account import ServiceAccountCredentials
 
-if not perdas.empty:
-    df_motivos = (
-        perdas["Motivo de Perda"]
-        .value_counts()
-        .reset_index(name="Qtd")
-        .rename(columns={"index": "Motivo de Perda"})
-    )
+# ===============================
+# CONFIGURAÇÃO DA PÁGINA
+# ===============================
+st.set_page_config(
+    page_title="BI Expansão Performance",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-    fig_loss = px.bar(
-        df_motivos,
-        x="Qtd",
-        y="Motivo de Perda",
-        orientation="h",
-        title="Motivos de Perda"
-    )
+# ===============================
+# ESTILO
+# ===============================
+st.markdown("""
+<style>
+.stApp { background-color: #ffffff; }
+[data-testid="stMetric"] { display: none; }
 
-    st.plotly_chart(fig_loss, use_container_width=True)
+.kpi-card {
+    background: #fff;
+    padding: 18px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    height: 120px;
+}
+
+.card-blue { border-left: 6px solid #3498db; }
+.card-green { border-left: 6px solid #2ecc71; }
+.card-orange { border-left: 6px solid #f39c12; }
+.card-teal { border-left: 6px solid #1abc9c; }
+.card-red { border-left: 6px solid #e74c3c; }
+
+.card-label { font-size: 13px; color: #7f
