@@ -1,6 +1,5 @@
 # ==============================================================================
-# BI CORPORATIVO PRO – STREAMLIT
-# Arquitetura Sênior | Performance | Boas Práticas BI
+# BI CORPORATIVO PRO – STREAMLIT (VERSÃO SÊNIOR RESILIENTE)
 # ==============================================================================
 
 import streamlit as st
@@ -37,7 +36,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. CONEXÃO GOOGLE SHEETS (CACHE DE RECURSO)
+# 1. FUNÇÃO UTILITÁRIA – MAPEAMENTO DE COLUNAS
+# ==============================================================================
+def encontrar_coluna(df, possiveis_nomes):
+    for col in df.columns:
+        col_norm = col.strip().lower()
+        for nome in possiveis_nomes:
+            if nome in col_norm:
+                return col
+    return None
+
+# ==============================================================================
+# 2. CONEXÃO GOOGLE SHEETS (CACHE)
 # ==============================================================================
 @st.cache_resource(show_spinner=False)
 def conectar_gsheets():
@@ -58,16 +68,15 @@ def conectar_gsheets():
     return client.open("BI_Historico").sheet1
 
 # ==============================================================================
-# 2. CARGA DO HISTÓRICO
+# 3. CARGA DO HISTÓRICO
 # ==============================================================================
 @st.cache_data(show_spinner=False)
 def carregar_historico():
     sheet = conectar_gsheets()
-    data = sheet.get_all_records()
-    return pd.DataFrame(data)
+    return pd.DataFrame(sheet.get_all_records())
 
 # ==============================================================================
-# 3. PROCESSAMENTO DE DADOS (ETL LEVE)
+# 4. PROCESSAMENTO DE DADOS (ETL ROBUSTO)
 # ==============================================================================
 @st.cache_data(show_spinner=False)
 def processar_dados(df: pd.DataFrame) -> pd.DataFrame:
@@ -77,32 +86,55 @@ def processar_dados(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip()
 
-    etapa = df['Etapa'].astype(str).str.lower()
-    motivo = df.get('Motivo de Perda', '').astype(str).str.lower()
-    estado = df.get('Estado', '').astype(str).str.lower()
+    # 🔎 Detecção dinâmica de colunas
+    col_etapa  = encontrar_coluna(df, ['etapa', 'fase', 'stage'])
+    col_motivo = encontrar_coluna(df, ['motivo'])
+    col_estado = encontrar_coluna(df, ['estado', 'status'])
+    col_cidade = encontrar_coluna(df, ['cidade'])
+    col_data   = encontrar_coluna(df, ['criacao', 'criação', 'data'])
 
+    etapa  = df[col_etapa].astype(str).str.lower() if col_etapa else ''
+    motivo = df[col_motivo].astype(str).str.lower() if col_motivo else ''
+    estado = df[col_estado].astype(str).str.lower() if col_estado else ''
+
+    # 🎯 Status semântico
     df['Status_Calc'] = 'Em Andamento'
-    df.loc[etapa.str.contains('venda|fechamento|matricula|faturado', na=False), 'Status_Calc'] = 'Ganho'
-    df.loc[
-        (estado == 'perdida') |
-        ((motivo.notna()) & (motivo != '') & (motivo != 'nan')),
-        'Status_Calc'
-    ] = 'Perdido'
 
-    col_data = next((c for c in df.columns if 'criacao' in c.lower() or 'criação' in c.lower()), None)
+    if col_etapa:
+        df.loc[
+            etapa.str.contains('venda|fechamento|matricula|faturado', na=False),
+            'Status_Calc'
+        ] = 'Ganho'
+
+    if col_estado or col_motivo:
+        df.loc[
+            (estado == 'perdida') |
+            ((motivo != '') & (motivo != 'nan')),
+            'Status_Calc'
+        ] = 'Perdido'
+
+    # 📅 Data
     if col_data:
-        df['Data_Criacao_DT'] = pd.to_datetime(df[col_data], errors='coerce', dayfirst=True)
+        df['Data_Criacao_DT'] = pd.to_datetime(
+            df[col_data],
+            errors='coerce',
+            dayfirst=True
+        )
 
-    if 'Cidade Interesse' in df.columns:
+    # 🌍 Cidade
+    if col_cidade:
         df['Cidade_Clean'] = (
-            df['Cidade Interesse']
+            df[col_cidade]
             .astype(str)
             .str.split('-').str[0]
             .str.split('(').str[0]
             .str.strip()
             .str.title()
         )
+    else:
+        df['Cidade_Clean'] = 'Não Informado'
 
+    # Campos padrão BI
     for col in ['Fonte', 'Campanha']:
         if col not in df.columns:
             df[col] = '-'
@@ -110,7 +142,7 @@ def processar_dados(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # ==============================================================================
-# 4. CAMADA DE MÉTRICAS (SEMÂNTICA)
+# 5. MÉTRICAS (CAMADA SEMÂNTICA)
 # ==============================================================================
 def calcular_kpis(df: pd.DataFrame) -> dict:
     total = len(df)
@@ -127,11 +159,35 @@ def calcular_kpis(df: pd.DataFrame) -> dict:
     }
 
 # ==============================================================================
-# 5. DASHBOARD
+# 6. FILTROS (SIDEBAR)
+# ==============================================================================
+def aplicar_filtros(df: pd.DataFrame) -> pd.DataFrame:
+    st.sidebar.header("🔎 Filtros")
+
+    status = st.sidebar.multiselect(
+        "Status",
+        options=df['Status_Calc'].unique(),
+        default=df['Status_Calc'].unique()
+    )
+
+    cidade = st.sidebar.multiselect(
+        "Cidade",
+        options=sorted(df['Cidade_Clean'].unique())
+    )
+
+    if status:
+        df = df[df['Status_Calc'].isin(status)]
+    if cidade:
+        df = df[df['Cidade_Clean'].isin(cidade)]
+
+    return df
+
+# ==============================================================================
+# 7. DASHBOARD
 # ==============================================================================
 def render_dashboard(df: pd.DataFrame):
     if df.empty:
-        st.warning("Nenhum dado encontrado.")
+        st.warning("Nenhum dado encontrado para os filtros aplicados.")
         return
 
     kpis = calcular_kpis(df)
@@ -139,7 +195,7 @@ def render_dashboard(df: pd.DataFrame):
     st.markdown("## 📊 Performance Geral")
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Leads Totais", kpis['total'])
+    c1.metric("Leads", kpis['total'])
     c2.metric("Vendas", kpis['ganhos'], f"{kpis['conversao']:.1f}%")
     c3.metric("Em Andamento", kpis['andamento'])
     c4.metric("Perdidos", kpis['perdidos'])
@@ -173,43 +229,18 @@ def render_dashboard(df: pd.DataFrame):
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-
     st.markdown("### 📄 Base Analítica")
     st.dataframe(df, use_container_width=True)
 
 # ==============================================================================
-# 6. SIDEBAR – FILTROS
-# ==============================================================================
-def filtros_sidebar(df: pd.DataFrame) -> pd.DataFrame:
-    st.sidebar.header("🔎 Filtros")
-
-    status = st.sidebar.multiselect(
-        "Status",
-        options=df['Status_Calc'].unique(),
-        default=df['Status_Calc'].unique()
-    )
-
-    cidade = st.sidebar.multiselect(
-        "Cidade",
-        options=sorted(df['Cidade_Clean'].dropna().unique())
-    )
-
-    if status:
-        df = df[df['Status_Calc'].isin(status)]
-    if cidade:
-        df = df[df['Cidade_Clean'].isin(cidade)]
-
-    return df
-
-# ==============================================================================
-# 7. APLICAÇÃO PRINCIPAL
+# 8. APP PRINCIPAL
 # ==============================================================================
 def main():
     st.title("📈 BI Corporativo Pro")
 
     df_raw = carregar_historico()
     df = processar_dados(df_raw)
-    df = filtros_sidebar(df)
+    df = aplicar_filtros(df)
     render_dashboard(df)
 
 # ==============================================================================
