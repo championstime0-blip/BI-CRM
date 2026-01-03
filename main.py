@@ -13,7 +13,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="BI Corporativo Pro", layout="wide", initial_sidebar_state="expanded")
 
-# --- ESTILIZAÇÃO CSS (Contraste e Cards) ---
+# --- ESTILIZAÇÃO CSS E TRADUÇÃO DE COMPONENTES ---
 st.markdown("""
 <style>
     .stApp { color: #2c3e50; }
@@ -25,18 +25,7 @@ st.markdown("""
         box-shadow: 2px 2px 8px rgba(0,0,0,0.05);
     }
     [data-testid="stMetricValue"] { font-size: 30px; color: #2c3e50 !important; font-weight: bold; }
-    .campaign-card {
-        background-color: #ffffff;
-        border: 1px solid #dcdde1;
-        padding: 20px;
-        border-radius: 15px;
-        border-top: 6px solid #1abc9c;
-        text-align: center;
-        box-shadow: 2px 4px 10px rgba(0,0,0,0.08);
-        height: 100%;
-    }
-    .campaign-card b { color: #1e272e !important; font-size: 18px; display: block; }
-    .val { font-size: 32px; color: #16a085; font-weight: 800; }
+    
     .date-range-box {
         background-color: #2c3e50;
         color: #ffffff;
@@ -47,7 +36,36 @@ st.markdown("""
         font-weight: 600;
         font-size: 18px;
     }
+
+    /* TRADUÇÃO MANUAL DO COMPONENTE DE UPLOAD */
+    section[data-testid="stFileUploadDropzone"] div div::before {
+        content: "Arraste e solte o arquivo aqui" !important;
+    }
+    section[data-testid="stFileUploadDropzone"] div div span {
+        display: none;
+    }
+    section[data-testid="stFileUploadDropzone"] div div::after {
+        content: "Limite de 200MB por arquivo • CSV" !important;
+        display: block;
+        font-size: 12px;
+        padding-top: 0.5rem;
+    }
+    button[kind="secondary"] {
+        /* Localiza o botão de upload pelo texto original e simula a troca */
+    }
 </style>
+
+<script>
+    // Gambiarra necessária para traduzir o botão 'Browse files' que é shadow DOM/protegido
+    const observer = new MutationObserver(mutations => {
+        for (const button of document.querySelectorAll('button')) {
+            if (button.innerText === 'Browse files') {
+                button.innerText = 'Carregar';
+            }
+        }
+    });
+    observer.observe(document.body, {childList: true, subtree: true});
+</script>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
@@ -76,7 +94,6 @@ def salvar_no_gsheets(df, semana, marca):
             df_save['semana_ref'] = semana
             df_save['marca_ref'] = marca
             df_save['data_upload'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            # Converte colunas de data para string antes de enviar para evitar erro de JSON
             for col in df_save.select_dtypes(include=['datetime64']).columns:
                 df_save[col] = df_save[col].dt.strftime('%d/%m/%Y')
             sheet.append_rows(df_save.fillna('-').astype(str).values.tolist())
@@ -132,14 +149,11 @@ def renderizar_dashboard_completo(df, titulo_recorte="Dashboard"):
     vendas = len(df[df['Status_Calc'] == 'Ganho'])
     conv_final = (vendas / total_leads * 100) if total_leads > 0 else 0
 
-    # --- INDICADORES ---
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Leads Totais", total_leads)
     c2.metric("Conversão Geral", f"{conv_final:.1f}%")
-    
     inalc = len(df[(df['Motivo de Perda'].str.lower() == 'sem resposta') & (df['Etapa'].str.lower() == 'aguardando resposta')])
     c3.metric("Alcance Inicial", f"{100-(inalc/total_leads*100):.1f}%" if total_leads > 0 else "0%")
-    
     avancados = len(df[df['Etapa'].isin(['Qualificado', 'Reunião Agendada', 'Reunião Realizada', 'Venda/Fechamento'])])
     c4.metric("Qualificação Funil", f"{(avancados/total_leads*100):.1f}%" if total_leads > 0 else "0%")
 
@@ -167,7 +181,7 @@ def renderizar_dashboard_completo(df, titulo_recorte="Dashboard"):
             motivos.columns = ['Motivo', 'Qtd']
             motivos['Label'] = motivos.apply(lambda x: f"<b>{int(x['Qtd'])}</b><br>{round(x['Qtd']/total_leads*100,1)}%", axis=1)
             fig_loss = go.Figure(data=[go.Bar(x=motivos['Motivo'], y=motivos['Qtd'], text=motivos['Label'], textposition='outside', marker_color='#e74c3c')])
-            fig_loss.update_layout(plot_bgcolor='rgba(0,0,0,0)', yaxis(showticklabels=False))
+            fig_loss.update_layout(plot_bgcolor='rgba(0,0,0,0)', yaxis=dict(showticklabels=False))
             st.plotly_chart(fig_loss, use_container_width=True)
 
 # ==============================================================================
@@ -177,8 +191,12 @@ st.title("🚀 BI Expansão Performance")
 modo = st.radio("Selecione o Modo:", ["📥 Importar Planilha", "🗄️ Histórico Gerencial"], horizontal=True)
 
 if modo == "📥 Importar Planilha":
-    marca_sel = st.sidebar.selectbox("Operação:", ["Prepara IA", "Microlins", "Ensina Mais TM Pedro", "Ensina Mais TM Luciana"])
-    file = st.sidebar.file_uploader("Subir Pedro.csv", type=['csv'])
+    # Alteração solicitada: Marca / Consultor
+    marca_sel = st.sidebar.selectbox("Marca / Consultor:", ["Prepara IA", "Microlins", "Ensina Mais TM Pedro", "Ensina Mais TM Luciana"])
+    
+    # Alteração solicitada: Subir arquivo .csv
+    file = st.sidebar.file_uploader("Subir arquivo .csv", type=['csv'])
+    
     if file:
         df_raw = process_data(pd.read_csv(io.StringIO(file.getvalue().decode('utf-8-sig')), sep=None, engine='python'))
         termo = marca_sel.split(' ')[-1]
@@ -194,23 +212,17 @@ if modo == "📥 Importar Planilha":
 else:
     df_h = carregar_historico_gsheets()
     if not df_h.empty:
-        # --- FILTROS GERENCIAIS ---
         st.sidebar.header("🔍 Filtros do Histórico")
-        
-        # Filtro de Marca
         marcas_disponiveis = ["Todas"] + list(df_h['marca_ref'].unique())
-        f_marca = st.sidebar.selectbox("Filtrar por Marca:", marcas_disponiveis)
+        f_marca = st.sidebar.selectbox("Filtrar por Marca / Consultor:", marcas_disponiveis)
         
-        # Filtro de Semana
         semanas_disponiveis = ["Todas"] + sorted(list(df_h['semana_ref'].unique()))
         f_semana = st.sidebar.selectbox("Filtrar por Semana:", semanas_disponiveis)
         
-        # Aplicação dos Filtros
         df_v = df_h.copy()
         if f_marca != "Todas": df_v = df_v[df_v['marca_ref'] == f_marca]
         if f_semana != "Todas": df_v = df_v[df_v['semana_ref'] == f_semana]
         
-        # Botão de Limpeza
         st.sidebar.divider()
         if st.sidebar.button("⚠️ Limpar Todo o Histórico"):
             if limpar_historico_gsheets():
