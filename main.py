@@ -13,40 +13,71 @@ from oauth2client.service_account import ServiceAccountCredentials
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="BI Corporativo Pro", layout="wide", initial_sidebar_state="expanded")
 
-# --- ESTILIZAÇÃO CSS AVANÇADA ---
+# --- ESTILIZAÇÃO CSS (CORREÇÃO DE CONTRASTE E CORES) ---
 st.markdown("""
 <style>
-    [data-testid="stMetric"] {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.02);
-    }
-    [data-testid="stMetricValue"] {
-        font-size: 28px;
+    /* Ajuste global para garantir textos escuros em áreas claras */
+    .stApp {
         color: #2c3e50;
     }
+
+    /* Métricas Principais */
+    [data-testid="stMetric"] {
+        background-color: #ffffff;
+        border: 1px solid #dcdde1;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 2px 2px 8px rgba(0,0,0,0.05);
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 30px;
+        color: #2c3e50 !important;
+        font-weight: bold;
+    }
+    [data-testid="stMetricLabel"] {
+        color: #57606f !important;
+        font-size: 16px;
+    }
+
+    /* Cards de Campanha (Contraste Total) */
     .campaign-card {
-        background: linear-gradient(135deg, #ffffff 0%, #f9f9f9 100%);
+        background-color: #ffffff;
         border: 1px solid #dcdde1;
         padding: 20px;
         border-radius: 15px;
-        border-top: 5px solid #1abc9c;
+        border-top: 6px solid #1abc9c;
         text-align: center;
-        transition: transform 0.3s;
+        box-shadow: 2px 4px 10px rgba(0,0,0,0.08);
         height: 100%;
     }
-    .campaign-card:hover { transform: translateY(-5px); }
+    .campaign-card b {
+        color: #1e272e !important; /* Azul quase preto */
+        font-size: 18px;
+        display: block;
+        margin-bottom: 5px;
+    }
+    .campaign-card small {
+        color: #7f8c8d !important; /* Cinza escuro */
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .campaign-card .val {
+        font-size: 32px;
+        color: #16a085;
+        font-weight: 800;
+    }
+
+    /* Barra de Recorte de Data */
     .date-range-box {
         background-color: #2c3e50;
         color: #ffffff;
-        padding: 12px;
+        padding: 15px;
         border-radius: 12px;
         text-align: center;
-        margin-bottom: 25px;
-        font-weight: 500;
-        letter-spacing: 1px;
+        margin-bottom: 30px;
+        font-weight: 600;
+        font-size: 18px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -77,7 +108,7 @@ def salvar_no_gsheets(df, semana, marca):
             df_save['semana_ref'] = semana
             df_save['marca_ref'] = marca
             df_save['data_upload'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            sheet.append_rows(df_save.fillna('-').values.tolist())
+            sheet.append_rows(df_save.fillna('-').astype(str).values.tolist())
             return True
         except: return False
     return False
@@ -118,32 +149,33 @@ def process_data(df):
 
 def renderizar_dashboard_completo(df, titulo_recorte="Análise de Performance"):
     if df.empty: return
-    total = len(df)
+    total_leads = len(df)
     vendas = len(df[df['Status_Calc'] == 'Ganho'])
-    perdidos = len(df[df['Status_Calc'] == 'Perdido'])
-    conversao = (vendas / total * 100) if total > 0 else 0
+    conv_final = (vendas / total_leads * 100) if total_leads > 0 else 0
 
+    # --- BARRA DE RECORTE ---
     if 'Data_Criacao_DT' in df.columns and not df['Data_Criacao_DT'].isnull().all():
-        st.markdown(f'<div class="date-range-box">📅 PERÍODO DOS LEADS: {df["Data_Criacao_DT"].min().strftime("%d/%m/%Y")} ATÉ {df["Data_Criacao_DT"].max().strftime("%d/%m/%Y")}</div>', unsafe_allow_html=True)
+        st.markdown(f'''<div class="date-range-box">📅 PERÍODO ANALISADO: {df["Data_Criacao_DT"].min().strftime("%d/%m/%Y")} ATÉ {df["Data_Criacao_DT"].max().strftime("%d/%m/%Y")}</div>''', unsafe_allow_html=True)
 
+    # --- KPIs ---
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Leads Totais", total)
-    c2.metric("Conversão Final", f"{conversao:.1f}%")
+    c1.metric("Leads Totais", total_leads)
+    c2.metric("Conversão Geral", f"{conv_final:.1f}%")
     
     inalc = len(df[(df['Motivo de Perda'].str.lower() == 'sem resposta') & (df['Etapa'].str.lower() == 'aguardando resposta')])
-    ind_qualidade = 100 - (inalc / total * 100) if total > 0 else 100
-    c3.metric("Índice de Alcance", f"{ind_qualidade:.1f}%", help="Leads que atenderam ao menos o 1º contato")
+    ind_alcance = 100 - (inalc / total_leads * 100) if total_leads > 0 else 100
+    c3.metric("Índice de Contato", f"{ind_alcance:.1f}%")
     
     avancados = len(df[df['Etapa'].isin(['Qualificado', 'Reunião Agendada', 'Reunião Realizada', 'Venda/Fechamento'])])
-    eficiencia = (avancados / total * 100) if total > 0 else 0
-    c4.metric("Eficiência Funil", f"{eficiencia:.1f}%", help="Leads que avançaram para etapas decisivas")
+    eficiencia = (avancados / total_leads * 100) if total_leads > 0 else 0
+    c4.metric("Qualificação Funil", f"{eficiencia:.1f}%")
 
     st.divider()
     tab1, tab2, tab3 = st.tabs(["📢 Estratégia Marketing", "📈 Eficiência Comercial", "🚫 Motivos de Perda"])
     
     with tab1:
         col_utm = next((c for c in df.columns if 'utm_source' in c.lower()), 'Fonte')
-        st.subheader(f"🏆 Melhores Origens por {col_utm}")
+        st.subheader(f"🏆 Top 3 Fontes de Avanço")
         
         df_top = df[df['Etapa'].isin(['Qualificado', 'Reunião Agendada', 'Reunião Realizada', 'Venda/Fechamento'])]
         if not df_top.empty:
@@ -151,67 +183,88 @@ def renderizar_dashboard_completo(df, titulo_recorte="Análise de Performance"):
             cols = st.columns(3)
             for i, row in ranking.iterrows():
                 with cols[i]:
-                    st.markdown(f'<div class="campaign-card"><small>TOP {i+1} SOURCE</small><br><b>{row.iloc[0]}</b><br><span style="font-size:24px; color:#16a085;">{row.iloc[1]}</span><br><small>Leads Avançados</small></div>', unsafe_allow_html=True)
+                    st.markdown(f'''
+                    <div class="campaign-card">
+                        <small>RANKING TOP {i+1}</small>
+                        <b>{row.iloc[0]}</b>
+                        <div class="val">{row.iloc[1]}</div>
+                        <small style="color:#2c3e50 !important;">LEADS QUALIFICADOS</small>
+                    </div>
+                    ''', unsafe_allow_html=True)
         
         st.write("")
-        col_l, col_r = st.columns(2)
-        with col_l:
-            st.plotly_chart(px.pie(df, names=col_utm, hole=0.5, title="Mix de Marketing", color_discrete_sequence=px.colors.qualitative.Prism), use_container_width=True)
-        with col_r:
+        cl, cr = st.columns(2)
+        with cl:
+            st.plotly_chart(px.pie(df, names=col_utm, hole=0.5, title="Mix de Marketing"), use_container_width=True)
+        with cr:
             df_c = df['Campanha'].value_counts().head(10).reset_index()
-            fig_c = px.bar(df_c, x='count', y='Campanha', orientation='h', title="Top 10 Campanhas (Volume Geral)", color='count', color_continuous_scale='Viridis')
-            fig_c.update_layout(showlegend=False, coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'}, plot_bgcolor='rgba(0,0,0,0)')
+            fig_c = px.bar(df_c, x='count', y='Campanha', orientation='h', title="Top 10 Campanhas", color='count', color_continuous_scale='Blues')
+            fig_c.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_c, use_container_width=True)
 
     with tab2:
-        st.subheader("Saúde e Conversão do Funil")
+        st.subheader("Saúde Comercial do Funil")
         ordem = ['Aguardando Resposta', 'Confirmou Interesse', 'Qualificado', 'Reunião Agendada', 'Reunião Realizada', 'Venda/Fechamento']
         df_f = df['Etapa'].value_counts().reindex(ordem).fillna(0).reset_index()
         fig_fun = go.Figure(go.Funnel(y=df_f['Etapa'], x=df_f['count'], textinfo="value+percent initial",
                                      marker={"color": ["#34495e", "#2980b9", "#3498db", "#1abc9c", "#16a085", "#27ae60"]}))
-        
-        fig_fun.update_layout(margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig_fun, use_container_width=True)
+        
 
     with tab3:
-        st.subheader("🚫 Análise Estratégica de Perdas (Polos)")
+        st.subheader("🚫 Análise Estratégica de Motivos de Perda")
+        st.write("Impacto dos motivos sobre os leads totais.")
+        
         df_lost = df[df['Status_Calc'] == 'Perdido'].copy()
         if not df_lost.empty:
             mask = (df_lost['Motivo de Perda'].str.lower() != 'sem resposta') | (df_lost['Etapa'].str.lower() == 'aguardando resposta')
-            motivos = df_lost[mask]['Motivo de Perda'].value_counts().head(8).reset_index()
+            motivos = df_lost[mask]['Motivo de Perda'].value_counts().head(10).reset_index()
             motivos.columns = ['Motivo', 'Qtd']
-            motivos['Perc'] = (motivos['Qtd'] / total * 100).round(1)
+            motivos['Perc'] = (motivos['Qtd'] / total_leads * 100).round(1)
             motivos['Label'] = motivos.apply(lambda x: f"<b>{int(x['Qtd'])}</b><br>{x['Perc']}%", axis=1)
 
-            fig_loss = go.Figure(data=[go.Bar(x=motivos['Motivo'], y=motivos['Qtd'], text=motivos['Label'], textposition='outside',
-                                             marker_color='#e74c3c', opacity=0.85)])
-            fig_loss.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(t=50), height=500,
-                                  yaxis=dict(showgrid=True, gridcolor='#f0f2f6', showticklabels=False), xaxis=dict(showgrid=False))
+            # GRÁFICO DE POLOS VERTICAIS (SOLICITADO)
+            fig_loss = go.Figure(data=[go.Bar(
+                x=motivos['Motivo'], 
+                y=motivos['Qtd'], 
+                text=motivos['Label'], 
+                textposition='outside',
+                marker_color='#e74c3c', 
+                opacity=0.9
+            )])
+            
+            fig_loss.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                margin=dict(t=60, b=20),
+                height=550,
+                xaxis=dict(showgrid=False, tickfont=dict(size=12, color='#2c3e50')),
+                yaxis=dict(showticklabels=False, showgrid=True, gridcolor='#f0f2f6')
+            )
             st.plotly_chart(fig_loss, use_container_width=True)
-            st.info(f"Percentuais baseados no impacto real sobre os {total} leads totais.")
-        else: st.success("Nenhuma perda registrada!")
+        else: st.success("Excelente! Nenhuma perda registrada.")
 
 # ==============================================================================
-# 4. INTERFACE PRINCIPAL
+# 4. INTERFACE
 # ==============================================================================
 st.title("🚀 BI Expansão Performance")
 modo = st.radio("Selecione o Modo:", ["📥 Importar Planilha", "🗄️ Histórico Gerencial"], horizontal=True)
 
 if modo == "📥 Importar Planilha":
-    marca_sel = st.sidebar.selectbox("Operação:", ["Prepara IA", "Microlins", "Ensina Mais TM Pedro", "Ensina Mais TM Luciana"])
+    marca_sel = st.sidebar.selectbox("Marca/Operação:", ["Prepara IA", "Microlins", "Ensina Mais TM Pedro", "Ensina Mais TM Luciana"])
     file = st.sidebar.file_uploader("Subir Pedro.csv", type=['csv'])
     if file:
-        df = process_data(load_data(file))
+        df_raw = process_data(load_data(file))
         termo = marca_sel.split(' ')[-1]
-        col_resp = next((c for c in df.columns if any(x in c for x in ['Proprietário', 'Responsável'])), None)
-        if col_resp: df = df[df[col_resp].astype(str).str.contains(termo, case=False, na=False)]
+        col_resp = next((c for c in df_raw.columns if any(x in c for x in ['Proprietário', 'Responsável'])), None)
+        if col_resp: df_raw = df_raw[df_raw[col_resp].astype(str).str.contains(termo, case=False, na=False)]
         
         semana = st.sidebar.selectbox("Semana:", ["SEM1", "SEM2", "SEM3", "SEM4", "SEM5"])
-        if st.sidebar.button("💾 Salvar Histórico"):
-            if salvar_no_gsheets(df, semana, marca_sel): st.sidebar.success("Salvo!")
-        renderizar_dashboard_completo(df)
+        if st.sidebar.button("💾 Salvar no GSheets"):
+            if salvar_no_gsheets(df_raw, semana, marca_sel): st.sidebar.success("Dados salvos!")
+        renderizar_dashboard_completo(df_raw)
 else:
     df_h = carregar_historico_gsheets()
     if not df_h.empty:
         df_h['Data_Criacao_DT'] = pd.to_datetime(df_h['data_upload'], errors='coerce')
-        renderizar_dashboard_completo(df_h, "Visão Consolidada")
+        renderizar_dashboard_completo(df_h, "Visão Histórica Consolidada")
