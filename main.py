@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # ================================
-# AUTENTICAÇÃO GOOGLE SHEETS
+# GOOGLE SHEETS AUTH (RENDER)
 # ================================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -24,49 +24,36 @@ SCOPES = [
 @st.cache_resource
 def conectar_gsheets():
     """
-    Conecta ao Google Sheets usando Service Account via variável de ambiente
+    Autenticação via variável de ambiente CREDENCIAIS_GOOGLE
+    (Padrão Render)
     """
-    if "GOOGLE_SERVICE_ACCOUNT_JSON" not in os.environ:
-        st.error("❌ Variável GOOGLE_SERVICE_ACCOUNT_JSON não configurada no Render.")
+    if "CREDENCIAIS_GOOGLE" not in os.environ:
+        st.error("❌ Variável CREDENCIAIS_GOOGLE não encontrada no ambiente.")
         st.stop()
 
     try:
-        creds_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+        creds_dict = json.loads(os.environ["CREDENCIAIS_GOOGLE"])
+
         creds = Credentials.from_service_account_info(
-            creds_info,
+            creds_dict,
             scopes=SCOPES
         )
+
         client = gspread.authorize(creds)
         return client
+
     except Exception as e:
         st.error("❌ Erro ao autenticar no Google Sheets")
         st.exception(e)
         st.stop()
 
-def carregar_planilha(nome_planilha: str, aba: str):
+# ================================
+# FUNÇÕES DE BANCO (GSheets)
+# ================================
+def carregar_planilha(nome_planilha: str, aba: str) -> pd.DataFrame:
     client = conectar_gsheets()
     sheet = client.open(nome_planilha).worksheet(aba)
-    data = sheet.get_all_records()
-    return pd.DataFrame(data)
+    return pd.DataFrame(sheet.get_all_records())
 
 def salvar_planilha(nome_planilha: str, aba: str, df: pd.DataFrame):
-    client = conectar_gsheets()
-    sheet = client.open(nome_planilha).worksheet(aba)
-    sheet.append_rows(df.fillna("").astype(str).values.tolist())
-
-# ================================
-# EXEMPLO DE USO
-# ================================
-st.title("📊 BI-CRM Performance")
-
-if st.button("🔄 Carregar Histórico"):
-    df = carregar_planilha("BI_Historico", "base")
-    st.dataframe(df, use_container_width=True)
-
-if st.button("💾 Salvar Exemplo"):
-    exemplo = pd.DataFrame([
-        {"lead": "João", "status": "Ganho"},
-        {"lead": "Maria", "status": "Perdido"}
-    ])
-    salvar_planilha("BI_Historico", "base", exemplo)
-    st.success("Dados salvos com sucesso ✅")
+    client =
