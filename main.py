@@ -9,14 +9,13 @@ import io
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# ================= CONFIGURAÇÃO =================
+# ================= CONFIG =================
 st.set_page_config(page_title="BI Expansão Performance", layout="wide")
 
-# ================= CSS =================
 st.markdown("""
 <style>
 .stApp { background-color: #0e1117; color: white; }
-h1, h2, h3, h4 { color: white; }
+h1,h2,h3,h4 { color: white; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -40,7 +39,7 @@ def salvar_no_gsheets(df, marca):
 def carregar_historico():
     return pd.DataFrame(conectar_gsheets().get_all_records())
 
-# ================= CSV RD STATION =================
+# ================= CSV =================
 def load_data(file):
     raw = file.getvalue()
     for enc in ["utf-8-sig", "latin-1", "iso-8859-1"]:
@@ -52,18 +51,12 @@ def load_data(file):
             pass
     return pd.DataFrame()
 
-def normalizar_colunas(df):
-    df.columns = [c.strip() for c in df.columns]
-    return df
-
 def processar_rd(df):
-    df = normalizar_colunas(df)
+    df.columns = [c.strip() for c in df.columns]
 
     col_etapa = next(c for c in df.columns if "etapa" in c.lower() or "stage" in c.lower())
     col_motivo = next((c for c in df.columns if "motivo" in c.lower()), None)
     col_data = next(c for c in df.columns if "created" in c.lower() or "data" in c.lower())
-    col_campanha = next((c for c in df.columns if "campaign" in c.lower()), None)
-    col_fonte = next((c for c in df.columns if "source" in c.lower()), None)
 
     df["Etapa"] = df[col_etapa]
     df["Motivo de Perda"] = df[col_motivo] if col_motivo else ""
@@ -72,7 +65,7 @@ def processar_rd(df):
     def status(row):
         etapa = str(row["Etapa"]).lower()
         motivo = str(row["Motivo de Perda"]).strip().lower()
-        if "venda" in etapa or "faturado" in etapa:
+        if "venda" in etapa or "ganho" in etapa or "faturado" in etapa:
             return "Ganho"
         if motivo not in ["", "nan"]:
             return "Perdido"
@@ -92,8 +85,19 @@ def dashboard(df):
     c3.metric("Conversão", f"{(ganhos/total*100):.1f}%" if total else "0%")
 
     # ===== STATUS =====
-    df_status = df["Status_Calc"].value_counts().reset_index(name="Qtd")
-    fig_status = px.bar(df_status, x="index", y="Qtd", title="Status dos Leads")
+    df_status = (
+        df["Status_Calc"]
+        .value_counts()
+        .reset_index(name="Qtd")
+        .rename(columns={"index": "Status_Calc"})
+    )
+
+    fig_status = px.bar(
+        df_status,
+        x="Status_Calc",
+        y="Qtd",
+        title="Status dos Leads"
+    )
     st.plotly_chart(fig_status, use_container_width=True)
 
     # ===== FUNIL =====
@@ -113,21 +117,33 @@ def dashboard(df):
         .reindex(ordem)
         .fillna(0)
         .reset_index(name="Qtd")
+        .rename(columns={"index": "Etapa"})
     )
 
     fig_funil = go.Figure(go.Funnel(
-        y=df_funil["index"],
+        y=df_funil["Etapa"],
         x=df_funil["Qtd"],
         textinfo="value+percent initial"
     ))
-
     st.plotly_chart(fig_funil, use_container_width=True)
 
-    # ===== MOTIVOS =====
+    # ===== MOTIVOS DE PERDA =====
     perdas = df[df["Status_Calc"] == "Perdido"]
     if not perdas.empty:
-        df_motivos = perdas["Motivo de Perda"].value_counts().reset_index(name="Qtd")
-        fig_loss = px.bar(df_motivos, x="Qtd", y="index", orientation="h")
+        df_motivos = (
+            perdas["Motivo de Perda"]
+            .value_counts()
+            .reset_index(name="Qtd")
+            .rename(columns={"index": "Motivo"})
+        )
+
+        fig_loss = px.bar(
+            df_motivos,
+            x="Qtd",
+            y="Motivo",
+            orientation="h",
+            title="Motivos de Perda"
+        )
         st.plotly_chart(fig_loss, use_container_width=True)
 
 # ================= APP =================
