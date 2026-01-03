@@ -1,15 +1,15 @@
 # ==============================================================================
-# BI-CRM PERFORMANCE 2.0
-# Streamlit | BI Corporativo | Franquias
+# BI PERFORMANCE EXPANSÃO – VERSÃO SÊNIOR
+# Streamlit | BI | Franquias | Funil de Impacto Total
 # ==============================================================================
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import datetime
 import json
 import os
-from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -17,7 +17,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 # CONFIGURAÇÃO DA PÁGINA
 # ==============================================================================
 st.set_page_config(
-    page_title="BI-CRM Performance 2.0",
+    page_title="BI Expansão Pro",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -27,22 +27,14 @@ st.set_page_config(
 # ==============================================================================
 st.markdown("""
 <style>
-[data-testid="stMetricValue"] { font-size: 26px; font-weight: bold; }
+[data-testid="stMetricValue"] { font-size: 22px; font-weight: bold; }
 .block-container { padding-top: 1.2rem; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# FUNÇÕES UTILITÁRIAS
+# 1. LEITOR DE CSV UNIVERSAL (ROBUSTO)
 # ==============================================================================
-def encontrar_coluna(df, termos):
-    for col in df.columns:
-        col_norm = col.strip().lower()
-        for termo in termos:
-            if termo in col_norm:
-                return col
-    return None
-
 def ler_csv_universal(file):
     for sep in [';', ',']:
         for enc in ['utf-8-sig', 'latin-1']:
@@ -53,203 +45,167 @@ def ler_csv_universal(file):
     return pd.DataFrame()
 
 # ==============================================================================
-# CONEXÃO GOOGLE SHEETS
+# 2. PARSER DE MATRIZ DE FUNIL (LOCALIZA "SEMx")
 # ==============================================================================
-@st.cache_resource(show_spinner=False)
-def conectar_gsheets():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
+def parse_funil_expansao(file, semana_alvo):
+    try:
+        df_raw = pd.read_csv(file, header=None, sep=None, engine='python')
 
-    if "CREDENCIAIS_GOOGLE" in os.environ:
-        creds_dict = json.loads(os.environ["CREDENCIAIS_GOOGLE"])
-    elif "gsheets" in st.secrets:
-        creds_dict = dict(st.secrets["gsheets"])
-    else:
-        raise RuntimeError("Credenciais Google não encontradas")
+        header_row = None
+        for i, row in df_raw.iterrows():
+            if semana_alvo.upper() in row.astype(str).values:
+                header_row = i
+                break
 
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    return client.open("BI_Historico").sheet1
+        if header_row is None:
+            st.error(f"Semana {semana_alvo} não encontrada no arquivo.")
+            return pd.DataFrame()
 
-@st.cache_data(show_spinner=False)
-def carregar_historico():
-    sheet = conectar_gsheets()
-    return pd.DataFrame(sheet.get_all_records())
+        df = pd.read_csv(file, skiprows=header_row, sep=None, engine='python')
+        df.columns = df.columns.str.strip().str.upper()
 
-# ==============================================================================
-# PROCESSAMENTO E INTELIGÊNCIA DE BI
-# ==============================================================================
-@st.cache_data(show_spinner=False)
-def processar_dados(df):
-    if df.empty:
-        return df
+        col_desc = df.columns[0]
+        if semana_alvo.upper() not in df.columns:
+            st.error(f"Coluna {semana_alvo} não encontrada.")
+            return pd.DataFrame()
 
-    df = df.copy()
-    df.columns = df.columns.str.strip()
+        df_final = df[[col_desc, semana_alvo.upper()]].copy()
+        df_final.columns = ['Descricao', 'Valor']
+        df_final['Valor'] = pd.to_numeric(df_final['Valor'], errors='coerce').fillna(0)
+        df_final = df_final[df_final['Descricao'].notna()]
 
-    col_etapa   = encontrar_coluna(df, ['etapa', 'fase', 'stage'])
-    col_estado  = encontrar_coluna(df, ['estado'])
-    col_motivo  = encontrar_coluna(df, ['motivo'])
-    col_data    = encontrar_coluna(df, ['criacao', 'criação'])
-    col_resp    = encontrar_coluna(df, ['responsavel'])
-    col_tel     = encontrar_coluna(df, ['telefone'])
+        return df_final
 
-    etapa  = df[col_etapa].astype(str).str.lower() if col_etapa else ''
-    estado = df[col_estado].astype(str).str.lower() if col_estado else ''
-    motivo = df[col_motivo].astype(str).str.lower() if col_motivo else ''
-
-    # ---------------- STATUS (REGRA DE OURO) ----------------
-    df['Status_Calc'] = 'Em Andamento'
-
-    if col_etapa:
-        df.loc[etapa == 'faturado', 'Status_Calc'] = 'Ganho'
-
-    df.loc[
-        (estado == 'perdida') |
-        ((motivo != '') & (motivo != 'nan')),
-        'Status_Calc'
-    ] = 'Perdido'
-
-    # ---------------- DATA ----------------
-    if col_data:
-        df['Data_Criacao_DT'] = pd.to_datetime(df[col_data], errors='coerce', dayfirst=True)
-
-    # ---------------- SCORE DE SONDAGEM ----------------
-    perguntas = ['Atuação', 'Cidade Interesse', 'Prazo', 'Investimento', 'Capital de Investimento']
-    score = 0
-    for p in perguntas:
-        if p in df.columns:
-            score += df[p].notna() & (df[p].astype(str).str.strip() != '')
-
-    df['Score_Sondagem'] = (score / len(perguntas)) * 100
-
-    # ---------------- ALERTAS ----------------
-    df['Alerta_Inalcancavel'] = (
-        etapa.str.contains('aguardando') & etapa.str.contains('sem resposta')
-    )
-
-    df['Erro_Origem'] = (
-        df[col_tel].astype(str).str.contains('errado', case=False)
-        if col_tel else False
-    )
-
-    return df
+    except Exception as e:
+        st.error(f"Erro no processamento do CSV: {e}")
+        return pd.DataFrame()
 
 # ==============================================================================
-# FILTROS
+# 3. MOTOR DE BI – FUNIL DE IMPACTO TOTAL
 # ==============================================================================
-def aplicar_filtros(df):
-    st.sidebar.header("🎯 Filtros")
+def renderizar_bi_profissional(df, titulo):
+    def get_val(termo):
+        res = df[df['Descricao'].str.contains(termo, case=False, na=False)]
+        return res['Valor'].sum() if not res.empty else 0
 
-    marca = st.sidebar.selectbox(
-        "Marca",
-        ['Todas', 'Microlins', 'Prepara IA', 'Ensina Mais Pedro', 'Ensina Mais Lu']
-    )
+    # KPIs PRINCIPAIS
+    leads = get_val("TOTAL DE LEADS")
+    interesse = get_val("CONFIRMOU INTERESSE")
+    reuniao = get_val("REUNIÃO")
+    vendas = get_val("FATURADO")
 
-    if marca != 'Todas':
-        if 'Pedro' in marca:
-            df = df[df['Responsável'].str.contains('pedro', case=False, na=False)]
-        elif 'Lu' in marca:
-            df = df[df['Responsável'].str.contains('lu', case=False, na=False)]
+    conv_total = (vendas / leads * 100) if leads else 0
+    aproveitamento = (interesse / leads * 100) if leads else 0
 
-    return df
+    st.markdown(f"## {titulo}")
 
-# ==============================================================================
-# DASHBOARD
-# ==============================================================================
-def render_dashboard(df):
-    if df.empty:
-        st.warning("Sem dados disponíveis.")
-        return
-
-    st.title("📊 BI-CRM Performance 2.0")
-
-    # ---------------- PERÍODO ----------------
-    if 'Data_Criacao_DT' in df.columns:
-        st.info(
-            f"📅 Período analisado: "
-            f"{df['Data_Criacao_DT'].min().date()} → {df['Data_Criacao_DT'].max().date()}"
-        )
-
-    # ---------------- KPIs ----------------
-    total = len(df)
-    ganhos = (df['Status_Calc'] == 'Ganho').sum()
-    conv = ganhos / total * 100 if total else 0
+    # SEMÁFORO EXECUTIVO
+    delta_color = "normal" if conv_total > 5 else "off" if conv_total > 2 else "inverse"
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Leads", total)
-    c2.metric("Vendas", ganhos, f"{conv:.1f}%")
-    c3.metric("Score Médio", f"{df['Score_Sondagem'].mean():.0f}%")
-    c4.metric("Perdidos", (df['Status_Calc'] == 'Perdido').sum())
-
-    # ---------------- FUNIL ----------------
-    funil_ordem = [
-        "Sem resposta", "Aguardando Resposta", "Confirmou Interesse",
-        "Qualificado", "Reunião Agendada", "Reunião Realizada",
-        "Follow-up", "negociação", "Em aprovação", "Faturado"
-    ]
-
-    funil_df = (
-        df['Etapa']
-        .value_counts()
-        .reindex(funil_ordem)
-        .fillna(0)
-        .reset_index()
-    )
-
-    fig_funil = go.Funnel(
-        y=funil_df['index'],
-        x=funil_df['Etapa'],
-        textinfo="value+percent initial"
-    )
-
-    st.plotly_chart(go.Figure(fig_funil), use_container_width=True)
-
-    # ---------------- PERDAS ----------------
-    perdas = (
-        df[df['Status_Calc'] == 'Perdido']['Motivo de Perda']
-        .value_counts()
-        .reset_index()
-    )
-    perdas['Percentual'] = perdas['Motivo de Perda'] / total * 100
-
-    fig_perdas = px.bar(
-        perdas,
-        x='Motivo de Perda',
-        y='index',
-        orientation='h',
-        text=perdas['Motivo de Perda'].round(1).astype(str) + '%',
-        title="Motivos de Perda"
-    )
-
-    st.plotly_chart(fig_perdas, use_container_width=True)
+    c1.metric("Leads Totais", int(leads))
+    c2.metric("Conversão Final", f"{conv_total:.1f}%", delta_color=delta_color)
+    c3.metric("Aproveitamento Base", f"{aproveitamento:.1f}%")
+    c4.metric("Vendas (Faturado)", int(vendas))
 
     st.divider()
-    st.dataframe(df, use_container_width=True)
+
+    tab1, tab2 = st.tabs([
+        "📉 Funil de Conversão (Impacto Total)",
+        "🎯 Origem / Campanha"
+    ])
+
+    # ---------------- FUNIL ----------------
+    with tab1:
+        etapas = ["Leads", "Interesse", "Reunião", "Venda"]
+        valores = [leads, interesse, reuniao, vendas]
+
+        fig = go.Figure(go.Funnel(
+            y=etapas,
+            x=valores,
+            textinfo="value+percent initial",
+            connector={"line": {"color": "#555", "dash": "dot"}}
+        ))
+
+        fig.update_layout(height=420)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ---------------- MARKETING ----------------
+    with tab2:
+        canais = [
+            'GOOGLE', 'FACEBOOK', 'INSTAGRAM',
+            'META', 'TIKTOK', 'INDICAÇÃO', 'ORGÂNICO'
+        ]
+
+        df_mkt = df[
+            df['Descricao']
+            .str.upper()
+            .str.contains('|'.join(canais), na=False)
+        ]
+
+        if df_mkt.empty:
+            st.info("Nenhuma origem de marketing identificada.")
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.plotly_chart(
+                    px.pie(df_mkt, values='Valor', names='Descricao', hole=0.5),
+                    use_container_width=True
+                )
+            with c2:
+                st.plotly_chart(
+                    px.bar(
+                        df_mkt.sort_values('Valor'),
+                        x='Valor', y='Descricao',
+                        orientation='h'
+                    ),
+                    use_container_width=True
+                )
 
 # ==============================================================================
-# MAIN
+# 4. INTERFACE PRINCIPAL
 # ==============================================================================
-def main():
-    st.sidebar.header("📥 Entrada de Dados")
+st.title("🚀 BI Performance Expansão")
 
-    arquivo = st.sidebar.file_uploader("Upload Pedro.csv", type=['csv'])
+modo = st.sidebar.radio(
+    "Navegação",
+    ["📥 Importação", "🗄️ Histórico (em breve)"]
+)
 
-    if arquivo:
-        df_csv = ler_csv_universal(arquivo)
-        df_hist = carregar_historico()
-        df = pd.concat([df_csv, df_hist], ignore_index=True)
-    else:
-        df = carregar_historico()
+if modo == "📥 Importação":
+    marca = st.sidebar.selectbox(
+        "Unidade",
+        [
+            "Selecione...",
+            "Prepara IA",
+            "Microlins",
+            "Ensina Mais TM Pedro",
+            "Ensina Mais TM Luciana"
+        ]
+    )
 
-    df = processar_dados(df)
-    df = aplicar_filtros(df)
-    render_dashboard(df)
+    if marca != "Selecione...":
+        uploaded = st.sidebar.file_uploader(
+            "Upload do CSV do Funil",
+            type=["csv"]
+        )
 
-# ==============================================================================
-# START
-# ==============================================================================
-if __name__ == "__main__":
-    main()
+        if uploaded:
+            semana = st.sidebar.selectbox(
+                "Semana",
+                ["SEM1", "SEM2", "SEM3", "SEM4", "SEM5"]
+            )
+
+            df_funil = parse_funil_expansao(uploaded, semana)
+
+            if not df_funil.empty:
+                renderizar_bi_profissional(
+                    df_funil,
+                    titulo=f"{marca} • {semana}"
+                )
+
+elif modo == "🗄️ Histórico (em breve)":
+    st.info(
+        "Esta área será usada para comparação entre semanas, meses e marcas.\n\n"
+        "Próximo passo natural do projeto."
+    )
