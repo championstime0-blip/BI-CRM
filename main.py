@@ -7,23 +7,22 @@ import time
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="BI Multi-Marcas", layout="wide", initial_sidebar_state="expanded")
 
-# --- ESTILIZAÇÃO CSS (CORRIGIDA PARA DARK MODE) ---
+# --- ESTILIZAÇÃO CSS ---
 st.markdown("""
 <style>
-    /* Ajusta o tamanho da fonte das métricas, mas deixa a cor automática */
     [data-testid="stMetricValue"] {
         font-size: 26px;
         font-weight: bold;
     }
     .st-emotion-cache-1r6slb0 {
-        border: 1px solid #333; /* Borda mais sutil para dark mode */
+        border: 1px solid #333;
         padding: 15px;
         border-radius: 8px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÕES DE CARREGAMENTO ---
+# --- FUNÇÕES ---
 @st.cache_data(show_spinner=False)
 def load_data(file):
     try:
@@ -42,6 +41,7 @@ def load_data(file):
     return df
 
 def process_data(df):
+    # 1. Datas
     col_criacao = None
     col_fechamento = None
     possiveis_criacao = ['Data de criação', 'Created at', 'Data Criação', 'Data']
@@ -61,27 +61,41 @@ def process_data(df):
     else:
         df['Data_Fechamento_DT'] = pd.NaT
 
+    # 2. Cidades
     if 'Cidade Interesse' in df.columns:
         df['Cidade_Clean'] = df['Cidade Interesse'].astype(str).apply(lambda x: x.split('-')[0].split('(')[0].strip().title())
         df = df[df['Cidade_Clean'] != 'Nan']
     else: df['Cidade_Clean'] = 'Não Informado'
     
+    # --- 3. STATUS INTELIGENTE (NOVA REGRA DO "NADA") ---
     def deduzir_status(row):
-        motivo = str(row.get('Motivo de Perda', ''))
-        if motivo != '' and motivo.lower() != 'nan' and motivo.lower() != 'nat': return 'Perdido'
+        # Limpeza do motivo
+        raw_motivo = str(row.get('Motivo de Perda', ''))
+        motivo = raw_motivo.strip().lower() 
+        
+        # 1. Checa se é venda primeiro (Prioridade Máxima)
         etapa = str(row.get('Etapa', '')).lower()
-        if 'venda' in etapa or 'fechamento' in etapa or 'matricula' in etapa: return 'Ganho'
-        return 'Em Aberto'
+        if 'venda' in etapa or 'fechamento' in etapa or 'matricula' in etapa: 
+            return 'Ganho'
+
+        # Lista de valores que consideramos "Vazio/Em Andamento"
+        valores_vazios = ['nan', 'nat', 'none', '', '-', 'null']
+        
+        # 2. Regra do "Nada" ou Vazio -> EM ANDAMENTO
+        # Se contiver a palavra "nada" OU estiver na lista de vazios
+        if 'nada' in motivo or motivo in valores_vazios:
+            return 'Em Andamento'
+            
+        # 3. Se sobrou texto e não é "nada" -> PERDIDO
+        return 'Perdido'
 
     df['Status_Calc'] = df.apply(deduzir_status, axis=1)
     return df
 
-# --- INTERFACE PRINCIPAL ---
+# --- INTERFACE ---
 st.title("📊 BI Corporativo - Gestão de Marcas")
 
-# --- 1. FILTROS (Barra Lateral) ---
 st.sidebar.header("🎯 Configuração da Análise")
-
 opcoes_marca = [
     "Todas as Marcas",
     "Prepara IA", 
@@ -94,12 +108,11 @@ st.sidebar.divider()
 uploaded_file = st.sidebar.file_uploader("2º Carregar Planilha CSV", type=['csv'])
 
 if uploaded_file is not None:
-    # --- 2. LOADING ---
     with st.status("Processando dados...", expanded=True) as status:
         df_raw = load_data(uploaded_file)
         df = process_data(df_raw)
         
-        # Filtro de Marca
+        # Filtros
         df_filtered = df.copy()
         col_responsavel = None
         for col in ['Proprietário', 'Responsável', 'Dono do lead', 'Consultor']:
@@ -122,33 +135,32 @@ if uploaded_file is not None:
         st.error("Erro: Coluna 'Etapa' não encontrada.")
         st.stop()
 
-    # --- 3. RECORTE DE DATA ---
+    # Recorte
     if pd.notna(df_filtered['Data_Criacao_DT']).any():
         d_min = df_filtered['Data_Criacao_DT'].min()
         d_max = df_filtered['Data_Criacao_DT'].max()
         st.markdown(f"**📅 Recorte Analisado:** de {d_min.strftime('%d/%m')} a {d_max.strftime('%d/%m')}")
 
-    # --- CÁLCULO DE TOTAIS ---
+    # Totais
     total = len(df_filtered)
     vendas = len(df_filtered[df_filtered['Status_Calc'] == 'Ganho'])
     perdidos = len(df_filtered[df_filtered['Status_Calc'] == 'Perdido'])
-    ativos = total - vendas - perdidos
+    
+    # Em Andamento (calculado pela nova lógica)
+    em_andamento = len(df_filtered[df_filtered['Status_Calc'] == 'Em Andamento'])
+    
+    # Conversão
     conversao = (vendas / total * 100) if total > 0 else 0
 
     st.divider()
-    
-    # --- VISUALIZAÇÃO DOS KPIS (CORRIGIDO PARA DARK MODE) ---
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Leads Filtrados", total)
     c2.metric("Vendas (Ganhos)", vendas, delta=f"{conversao:.1f}% Conv.")
-    
-    # Aqui estavam os números "invisíveis" no dark mode - agora corrigidos
-    c3.metric("Em Aberto (Total)", ativos)
-    c4.metric("Perdidos (Total)", perdidos, delta_color="inverse")
+    c3.metric("Em Andamento", em_andamento)
+    c4.metric("Perdidos", perdidos, delta_color="inverse")
     
     st.divider()
 
-    # --- ABAS ---
     tab1, tab2, tab3 = st.tabs(["📢 Fonte & Campanha", "📉 Funil", "🚫 Detalhe de Perdas"])
 
     with tab1:
@@ -186,12 +198,9 @@ if uploaded_file is not None:
         df_funil['Etapa'] = pd.Categorical(df_funil['Etapa'], categories=[c for c in ordem_ideal if c in df_funil['Etapa'].values], ordered=True)
         df_funil = df_funil.sort_values('Etapa')
         
-        # CORREÇÃO DO NÚMERO DUPLICADO NO FUNIL
+        # Funil limpo (1 número)
         fig_funnel = px.funnel(df_funil, x='Volume', y='Etapa')
-        # Removemos o parâmetro text='Volume' do px.funnel e usamos update_traces
-        # Isso garante que o número apareça apenas uma vez e formatado
         fig_funnel.update_traces(texttemplate='%{value}', textposition='inside')
-        
         st.plotly_chart(fig_funnel, use_container_width=True)
 
     with tab3:
