@@ -2,22 +2,21 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt 
 import time
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="BI Multi-Marcas", layout="wide", initial_sidebar_state="expanded")
 
-# --- ESTILIZAÇÃO CSS ---
+# --- ESTILIZAÇÃO CSS (CORRIGIDA PARA DARK MODE) ---
 st.markdown("""
 <style>
+    /* Ajusta o tamanho da fonte das métricas, mas deixa a cor automática */
     [data-testid="stMetricValue"] {
-        font-size: 22px;
-        color: #0E1117;
+        font-size: 26px;
+        font-weight: bold;
     }
     .st-emotion-cache-1r6slb0 {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
+        border: 1px solid #333; /* Borda mais sutil para dark mode */
         padding: 15px;
         border-radius: 8px;
     }
@@ -25,7 +24,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- FUNÇÕES DE CARREGAMENTO ---
-@st.cache_data(show_spinner=False) # Desativa o spinner padrão para usarmos o nosso st.status
+@st.cache_data(show_spinner=False)
 def load_data(file):
     try:
         file.seek(0)
@@ -43,7 +42,6 @@ def load_data(file):
     return df
 
 def process_data(df):
-    # 1. Converter Datas
     col_criacao = None
     col_fechamento = None
     possiveis_criacao = ['Data de criação', 'Created at', 'Data Criação', 'Data']
@@ -63,13 +61,11 @@ def process_data(df):
     else:
         df['Data_Fechamento_DT'] = pd.NaT
 
-    # 2. Padronizar Cidades
     if 'Cidade Interesse' in df.columns:
         df['Cidade_Clean'] = df['Cidade Interesse'].astype(str).apply(lambda x: x.split('-')[0].split('(')[0].strip().title())
         df = df[df['Cidade_Clean'] != 'Nan']
     else: df['Cidade_Clean'] = 'Não Informado'
     
-    # 3. Status Inteligente
     def deduzir_status(row):
         motivo = str(row.get('Motivo de Perda', ''))
         if motivo != '' and motivo.lower() != 'nan' and motivo.lower() != 'nat': return 'Perdido'
@@ -83,7 +79,7 @@ def process_data(df):
 # --- INTERFACE PRINCIPAL ---
 st.title("📊 BI Corporativo - Gestão de Marcas")
 
-# --- 1. FILTROS ANTES DO UPLOAD (Barra Lateral) ---
+# --- 1. FILTROS (Barra Lateral) ---
 st.sidebar.header("🎯 Configuração da Análise")
 
 opcoes_marca = [
@@ -93,27 +89,17 @@ opcoes_marca = [
     "Ensina Mais TM Pedro", 
     "Ensina Mais TM Luciana"
 ]
-# O selectbox agora vem PRIMEIRO
 marca_selecionada = st.sidebar.selectbox("1º Selecione a Operação:", opcoes_marca)
-
 st.sidebar.divider()
-
-# O upload vem DEPOIS
 uploaded_file = st.sidebar.file_uploader("2º Carregar Planilha CSV", type=['csv'])
 
 if uploaded_file is not None:
-    # --- 2. LOADING COM ST.STATUS ---
-    with st.status("Iniciando processamento de dados...", expanded=True) as status:
-        st.write("📂 Lendo arquivo CSV...")
-        time.sleep(0.5) # Pequena pausa estética
+    # --- 2. LOADING ---
+    with st.status("Processando dados...", expanded=True) as status:
         df_raw = load_data(uploaded_file)
-        
-        st.write("🛠️ Padronizando datas e colunas...")
         df = process_data(df_raw)
         
-        st.write("🔍 Aplicando filtros de consultor...")
-        
-        # Lógica de Filtro (Aplicada aqui dentro do processamento)
+        # Filtro de Marca
         df_filtered = df.copy()
         col_responsavel = None
         for col in ['Proprietário', 'Responsável', 'Dono do lead', 'Consultor']:
@@ -130,21 +116,19 @@ if uploaded_file is not None:
                 if not matches.empty:
                     df_filtered = matches
         
-        status.update(label="Dados Carregados com Sucesso!", state="complete", expanded=False)
+        status.update(label="Pronto!", state="complete", expanded=False)
 
-    # --- 3. RECORTE SIMPLIFICADO (SOLICITAÇÃO) ---
+    if 'Etapa' not in df.columns:
+        st.error("Erro: Coluna 'Etapa' não encontrada.")
+        st.stop()
+
+    # --- 3. RECORTE DE DATA ---
     if pd.notna(df_filtered['Data_Criacao_DT']).any():
         d_min = df_filtered['Data_Criacao_DT'].min()
         d_max = df_filtered['Data_Criacao_DT'].max()
-        # Formato Simples: "Recorte: dd/mm a dd/mm"
         st.markdown(f"**📅 Recorte Analisado:** de {d_min.strftime('%d/%m')} a {d_max.strftime('%d/%m')}")
-    
-    # --- VERIFICAÇÃO DE SEGURANÇA ---
-    if 'Etapa' not in df.columns:
-        st.error("Erro: O arquivo não possui a coluna 'Etapa'.")
-        st.stop()
 
-    # --- KPIS PRINCIPAIS ---
+    # --- CÁLCULO DE TOTAIS ---
     total = len(df_filtered)
     vendas = len(df_filtered[df_filtered['Status_Calc'] == 'Ganho'])
     perdidos = len(df_filtered[df_filtered['Status_Calc'] == 'Perdido'])
@@ -152,16 +136,21 @@ if uploaded_file is not None:
     conversao = (vendas / total * 100) if total > 0 else 0
 
     st.divider()
+    
+    # --- VISUALIZAÇÃO DOS KPIS (CORRIGIDO PARA DARK MODE) ---
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Leads Filtrados", total)
     c2.metric("Vendas (Ganhos)", vendas, delta=f"{conversao:.1f}% Conv.")
-    c3.metric("Em Aberto", ativos)
-    c4.metric("Perdidos", perdidos, delta_color="inverse")
     
+    # Aqui estavam os números "invisíveis" no dark mode - agora corrigidos
+    c3.metric("Em Aberto (Total)", ativos)
+    c4.metric("Perdidos (Total)", perdidos, delta_color="inverse")
+    
+    st.divider()
+
     # --- ABAS ---
     tab1, tab2, tab3 = st.tabs(["📢 Fonte & Campanha", "📉 Funil", "🚫 Detalhe de Perdas"])
 
-    # TAB 1: FONTE E CAMPANHA
     with tab1:
         col_camp1, col_camp2 = st.columns(2)
         with col_camp1:
@@ -186,25 +175,25 @@ if uploaded_file is not None:
         if 'Fonte' in df_filtered.columns and 'Campanha' in df_filtered.columns:
             st.subheader("Matriz: Fonte vs Campanha")
             pivot_camp = pd.crosstab(df_filtered['Fonte'], df_filtered['Campanha'])
-            try:
-                st.dataframe(pivot_camp.style.background_gradient(cmap="Blues"), use_container_width=True)
-            except:
-                st.dataframe(pivot_camp, use_container_width=True)
+            st.dataframe(pivot_camp, use_container_width=True)
 
-    # TAB 2: FUNIL
     with tab2:
         st.subheader("Funil de Vendas")
         df_funil = df_filtered['Etapa'].value_counts().reset_index()
         df_funil.columns = ['Etapa', 'Volume']
+        
         ordem_ideal = ['Aguardando Resposta', 'Confirmou Interesse', 'Qualificado', 'Reunião Agendada', 'Reunião Realizada', 'Venda/Fechamento']
-        # Ordenação customizada se as etapas existirem
         df_funil['Etapa'] = pd.Categorical(df_funil['Etapa'], categories=[c for c in ordem_ideal if c in df_funil['Etapa'].values], ordered=True)
         df_funil = df_funil.sort_values('Etapa')
         
-        fig_funnel = px.funnel(df_funil, x='Volume', y='Etapa', text='Volume')
+        # CORREÇÃO DO NÚMERO DUPLICADO NO FUNIL
+        fig_funnel = px.funnel(df_funil, x='Volume', y='Etapa')
+        # Removemos o parâmetro text='Volume' do px.funnel e usamos update_traces
+        # Isso garante que o número apareça apenas uma vez e formatado
+        fig_funnel.update_traces(texttemplate='%{value}', textposition='inside')
+        
         st.plotly_chart(fig_funnel, use_container_width=True)
 
-    # TAB 3: PERDAS
     with tab3:
         st.subheader("Análise de Perdas")
         if 'Motivo de Perda' in df_filtered.columns:
@@ -233,7 +222,5 @@ if uploaded_file is not None:
                 st.success("Sem perdas registradas.")
         else:
             st.warning("Coluna 'Motivo de Perda' não encontrada.")
-
 else:
-    # Mensagem de espera inicial (Bonita e limpa)
     st.info("👈 Selecione a Operação e faça o Upload do CSV na barra lateral.")
