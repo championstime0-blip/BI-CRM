@@ -57,7 +57,7 @@ def conectar_google():
         return None
 
 # =========================
-# FUNÇÃO DE LEITURA CORRIGIDA
+# FUNÇÃO DE LEITURA (BLINDADA)
 # =========================
 def carregar_dados(marca):
     client = conectar_google()
@@ -67,27 +67,23 @@ def carregar_dados(marca):
         sh = client.open("BI_Historico")
         ws = sh.worksheet(marca)
         
-        # --- CORREÇÃO DO ERRO ---
-        # Usamos get_all_values() em vez de get_all_records()
-        # Isso retorna uma lista crua e evita o erro de "header duplicado"
+        # Usa get_all_values para evitar erro de cabeçalho duplicado
         dados_brutos = ws.get_all_values()
         
         if not dados_brutos:
-            return pd.DataFrame() # Planilha vazia
+            return pd.DataFrame() 
             
         headers = dados_brutos[0]
         linhas = dados_brutos[1:]
         
-        # Cria o DataFrame manualmente
         df = pd.DataFrame(linhas, columns=headers)
         
-        # Remove colunas sem nome (cabeçalhos vazios que causam o erro)
+        # Remove colunas vazias geradas pelo Sheets
         cols_validas = [c for c in df.columns if str(c).strip() != ""]
         df = df[cols_validas]
         
         return df
     except Exception as e:
-        # st.error(f"Detalhe do erro: {e}") 
         return pd.DataFrame()
 
 # =========================
@@ -103,8 +99,7 @@ marca_sel = st.sidebar.selectbox("Marca", ["PreparaIA", "Microlins", "Ensina Mai
 df = carregar_dados(marca_sel)
 
 if not df.empty:
-    # --- PADRONIZAÇÃO DE NOMES DE COLUNAS ---
-    # Garante que o código encontre as colunas mesmo se o nome mudar levemente
+    # --- PADRONIZAÇÃO DE NOMES ---
     cols_map = {c: c for c in df.columns}
     for c in df.columns:
         c_low = str(c).lower().strip()
@@ -118,24 +113,28 @@ if not df.empty:
     
     df = df.rename(columns=cols_map)
     
-    # --- TRATAMENTO DE TIPOS ---
-    # Data
+    # --- TRATAMENTO DE DADOS (CORREÇÃO DO ERRO) ---
+    
+    # 1. Data
     if "Data" in df.columns:
         df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
-        df = df.dropna(subset=['Data']) # Remove linhas vazias
+        df = df.dropna(subset=['Data'])
     
-    # Conversão Numérica Segura
+    # 2. Números Inteiros
     for col_num in ['Total', 'Perdidos']:
         if col_num in df.columns:
             df[col_num] = pd.to_numeric(df[col_num], errors='coerce').fillna(0).astype(int)
 
-    # Taxa (Remove % e vira número)
+    # 3. Taxa (AQUI ESTAVA O ERRO)
+    # A correção: usamos 'coerce' para transformar vazios em NaN, e depois fillna(0.0)
     if "Taxa" in df.columns:
-        df['Taxa_Num'] = df['Taxa'].astype(str).str.replace('%', '').str.replace(',', '.').astype(float)
+        # Primeiro limpa string, depois converte
+        clean_taxa = df['Taxa'].astype(str).str.replace('%', '').str.replace(',', '.')
+        df['Taxa_Num'] = pd.to_numeric(clean_taxa, errors='coerce').fillna(0.0)
     else:
         df['Taxa_Num'] = 0.0
 
-    # Garante colunas mínimas para não quebrar
+    # 4. Strings faltantes
     if "Top Fonte" not in df.columns: df["Top Fonte"] = "N/A"
     if "Responsável" not in df.columns: df["Responsável"] = "N/A"
     if "Semana" not in df.columns: df["Semana"] = "N/A"
@@ -194,7 +193,8 @@ if not df.empty:
         
         with col1:
             st.markdown("### 📈 Evolução da Taxa")
-            fig_evo = px.bar(df_filtrado, x="Semana", y="Taxa_Num", color="Responsável", barmode="group", text_auto='.1f', title="")
+            # Gráfico de Barras com Rótulos
+            fig_evo = px.bar(df_filtrado, x="Semana", y="Taxa_Num", color="Responsável", barmode="group", text_auto='.1f')
             fig_evo.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", yaxis_title="Taxa %")
             st.plotly_chart(fig_evo, use_container_width=True)
 
