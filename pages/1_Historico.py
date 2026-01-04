@@ -13,7 +13,7 @@ from datetime import datetime
 st.set_page_config(page_title="Histórico | Time Machine", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS (MANTIDA DO SEU CÓDIGO)
+# ESTILIZAÇÃO CSS
 # =========================
 st.markdown("""
 <style>
@@ -43,10 +43,6 @@ st.markdown("""
     font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 700;
     color: #22d3ee;
 }
-.funnel-card {
-    background: rgba(15, 23, 42, 0.6); border-left: 3px solid #22d3ee;
-    padding: 10px; margin-bottom: 10px; border-radius: 4px;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -57,10 +53,13 @@ def conectar_google():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds_json = os.environ.get("gcp_service_account") or st.secrets.get("gcp_service_account")
-        # Fallback para arquivo local se não tiver env var
         if not creds_json: 
-             creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-             return gspread.authorize(creds)
+             # Fallback local
+             try:
+                 creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+                 return gspread.authorize(creds)
+             except:
+                 return None
              
         creds_dict = json.loads(creds_json)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -69,84 +68,96 @@ def conectar_google():
         return None
 
 # =========================
-# LÓGICA DE PROCESSAMENTO (RECRIADA PARA O HISTÓRICO)
+# LÓGICA DE PROCESSAMENTO
 # =========================
-# Precisamos reprocessar os dados brutos do snapshot para gerar os gráficos
 ETAPAS_FUNIL = ["Sem contato", "Aguardando Resposta", "Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
 
 def processar_snapshot(df):
-    # Garante que colunas numéricas voltem a ser números (GSheets devolve tudo como texto)
-    # Recalcula Status caso não tenha sido salvo
     def status(row):
         etapa_lower = str(row["Etapa"]).lower() if "Etapa" in row else ""
         motivo = str(row["Motivo de Perda"]).strip().lower() if "Motivo de Perda" in row else ""
-        
         if any(x in etapa_lower for x in ["faturado", "ganho", "venda"]): return "Ganho"
         if motivo not in ["", "nan", "none", "-", "nan", "0", "nada", "n/a"]: return "Perdido"
         return "Em Andamento"
     
     if "Status" not in df.columns:
         df["Status"] = df.apply(status, axis=1)
-        
     return df
 
 # =========================
 # INTERFACE PRINCIPAL
 # =========================
 st.markdown('<div class="futuristic-title">🕰️ Máquina do Tempo</div>', unsafe_allow_html=True)
-st.info("Este painel recupera os dados **exatamente** como estavam no momento do salvamento.")
 
-# 1. CARREGAR O BANCO DE DADOS COMPLETO
+# 1. CARREGAR O BANCO DE DADOS
 with st.spinner("Acessando Banco de Dados de Snapshots..."):
     client = conectar_google()
     df_db = pd.DataFrame()
     
     if client:
         try:
-            sh = client.open("BI_Historico") # Nome da Planilha
-            ws = sh.worksheet("db_snapshots") # Nome da Aba criada pelo Home.py
+            sh = client.open("BI_Historico")
+            # Tenta pegar a aba correta
+            try:
+                ws = sh.worksheet("db_snapshots")
+            except:
+                st.warning("A aba 'db_snapshots' não foi encontrada. Salve um arquivo na Home primeiro.")
+                st.stop()
+
             dados = ws.get_all_values()
             
             if len(dados) > 1:
                 df_db = pd.DataFrame(dados[1:], columns=dados[0])
             else:
-                st.warning("O banco de dados existe, mas está vazio.")
+                st.info("O banco de dados está vazio. Vá para Home e salve um arquivo.")
+                st.stop()
+                
         except Exception as e:
-            st.error(f"Erro ao ler banco de dados (Verifique se salvou algo na Home primeiro): {e}")
+            st.error(f"Erro de conexão: {e}")
+            st.stop()
+    else:
+        st.error("Falha na autenticação do Google Sheets.")
+        st.stop()
 
-# 2. SELEÇÃO DO SNAPSHOT
+# 2. VERIFICAÇÃO DE INTEGRIDADE (CORREÇÃO DO ERRO)
 if not df_db.empty:
+    # Verifica se as colunas necessárias existem
+    colunas_necessarias = ['snapshot_id', 'data_salvamento']
+    colunas_faltantes = [c for c in colunas_necessarias if c not in df_db.columns]
+
+    if colunas_faltantes:
+        st.error(f"⚠️ Erro de Formato: As colunas {colunas_faltantes} não foram encontradas na planilha.")
+        st.info("Solução: Vá no Google Sheets, apague o conteúdo da aba 'db_snapshots' e salve um novo arquivo pela página Home.")
+        st.stop()
+
+    # --- SELEÇÃO DO SNAPSHOT ---
     st.sidebar.header("🗂️ Selecione a Versão")
     
-    # Cria uma coluna combinada para o selectbox ficar informativo
-    # Ex: "04/01/2026 | Semana 1 | Expansão Microlins"
-    if 'data_salvamento' in df_db.columns and 'semana_ref' in df_db.columns:
-        df_db['Label'] = df_db['data_salvamento'] + " | " + df_db['semana_ref'] + " | " + df_db.get('marca_ref', 'Geral')
+    # Cria label informativo
+    if 'semana_ref' in df_db.columns:
+        df_db['Label'] = df_db['data_salvamento'] + " | " + df_db['semana_ref'] + " | " + df_db.get('marca_ref', '')
     else:
         df_db['Label'] = df_db['snapshot_id']
 
-    # Remove duplicatas de IDs (caso haja bug de salvamento)
+    # Remove duplicatas
     opcoes = df_db[['snapshot_id', 'Label']].drop_duplicates().sort_values('snapshot_id', ascending=False)
     
     escolha = st.sidebar.selectbox("Escolha o Ponto de Restauração:", options=opcoes['Label'])
     
     if escolha:
-        # Pega o ID correspondente à escolha
         id_snap = opcoes[opcoes['Label'] == escolha]['snapshot_id'].values[0]
         
-        # --- FILTRA OS DADOS (A MÁGICA ACONTECE AQUI) ---
+        # Filtra o DataFrame
         df_recuperado = df_db[df_db['snapshot_id'] == id_snap].copy()
         
-        # Remove colunas de controle para não sujar
+        # Limpa colunas de controle
         meta_cols = ['snapshot_id', 'data_salvamento', 'Label']
         df_clean = df_recuperado.drop(columns=[c for c in meta_cols if c in df_recuperado.columns])
         
-        # Processa para garantir tipos corretos
+        # Processa
         df_final = processar_snapshot(df_clean)
         
-        # --- EXIBIÇÃO DO DASHBOARD (RECRIAÇÃO DO VISUAL DA HOME) ---
-        
-        # KPIS GERAIS
+        # --- DASHBOARD ---
         total = len(df_final)
         perdidos = df_final[df_final["Status"] == "Perdido"]
         andamento = df_final[df_final["Status"] == "Em Andamento"]
@@ -160,38 +171,30 @@ if not df_db.empty:
         
         col_graf1, col_graf2 = st.columns(2)
         
-        # GRÁFICO 1: FONTES (Igual Home)
         with col_graf1:
-            st.markdown('<div class="futuristic-sub">📡 Fontes de Tráfego</div>', unsafe_allow_html=True)
+            st.markdown('<div class="futuristic-sub">📡 Fontes</div>', unsafe_allow_html=True)
             if "Fonte" in df_final.columns:
                 df_fonte = df_final["Fonte"].value_counts().reset_index()
                 df_fonte.columns = ["Fonte", "Qtd"]
-                
                 fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, 
                                  color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2', '#155e75'])
                 fig_pie.update_traces(textposition='outside', textinfo='percent+label')
                 fig_pie.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
                 st.plotly_chart(fig_pie, use_container_width=True)
             else:
-                st.warning("Coluna 'Fonte' não encontrada neste snapshot.")
+                st.warning("Coluna 'Fonte' não encontrada.")
 
-        # GRÁFICO 2: FUNIL (Igual Home)
         with col_graf2:
-            st.markdown('<div class="futuristic-sub">📉 Funil do Momento</div>', unsafe_allow_html=True)
+            st.markdown('<div class="futuristic-sub">📉 Funil</div>', unsafe_allow_html=True)
             if "Etapa" in df_final.columns:
                 df_funil = df_final.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
                 df_funil["Percentual"] = (df_funil["Qtd"] / total * 100).round(1) if total > 0 else 0
-                
                 fig_funil = px.bar(df_funil, x="Qtd", y="Etapa", orientation="h", text=df_funil["Percentual"].astype(str)+"%", 
                                    color="Qtd", color_continuous_scale="Blues")
                 fig_funil.update_layout(template="plotly_dark", showlegend=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig_funil, use_container_width=True)
             else:
-                st.warning("Coluna 'Etapa' não encontrada neste snapshot.")
+                st.warning("Coluna 'Etapa' não encontrada.")
 
-        # TABELA DE DADOS
-        with st.expander("📂 Ver Dados Brutos deste Arquivo"):
+        with st.expander("📂 Ver Dados Brutos"):
             st.dataframe(df_final)
-
-else:
-    st.info("Nenhum histórico encontrado. Salve um arquivo na página Home primeiro.")
