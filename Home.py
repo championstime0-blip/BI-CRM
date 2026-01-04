@@ -42,14 +42,13 @@ st.markdown("""
 # MOTOR DE PROCESSAMENTO
 # =========================
 def processar(arquivo_bruto):
-    # O RD CRM exporta em Latin-1. Lemos e forçamos a limpeza imediata.
+    # Lendo o CSV (RD exporta em Latin-1)
     df = pd.read_csv(arquivo_bruto, sep=';', encoding='latin-1', on_bad_lines='skip')
     
-    # RESOLUÇÃO DEFINITIVA DO ERRO 'str': 
-    # Mantém apenas a primeira ocorrência de cada nome de coluna.
+    # SOLUÇÃO PARA O ERRO 'str': Remove colunas duplicadas pelo nome (mantém apenas a primeira)
     df = df.loc[:, ~df.columns.duplicated()].copy()
     
-    # Dicionário de mapeamento para as colunas que o RD exporta
+    # Mapeamento de colunas principais
     mapeamento = {}
     for c in df.columns:
         c_upper = str(c).upper().strip()
@@ -62,15 +61,12 @@ def processar(arquivo_bruto):
 
     df = df.rename(columns=mapeamento)
 
-    # Garante que as colunas críticas são strings e corrige caracteres (Ã£ -> ã)
-    for col in ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]:
+    # Limpeza de texto e correção de codificação (Ã£ -> ã)
+    colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
+    for col in colunas_texto:
         if col in df.columns:
-            # Forçamos a conversão para string e tratamos duplicados residuais
-            if isinstance(df[col], pd.DataFrame):
-                df[col] = df[col].iloc[:, 0]
-            
+            # Garantimos que tratamos apenas a coluna (Series)
             df[col] = df[col].astype(str).fillna("N/A")
-            # Correção manual de codificação para os termos que pediste
             df[col] = df[col].str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável")
 
     def definir_status(row):
@@ -88,8 +84,7 @@ def processar(arquivo_bruto):
 # =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
-# Sidebar com seletores
-st.sidebar.header("⚙️ Filtros de Registro")
+st.sidebar.header("⚙️ Configurações")
 marca = st.sidebar.selectbox("Marca", ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"])
 semana_ref = st.sidebar.selectbox("Semana de Referência", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
 
@@ -99,8 +94,7 @@ if arquivo:
     try:
         df = processar(arquivo)
         
-        # --- CABEÇALHO DE PERFIL ---
-        # Pegamos o primeiro valor válido da coluna Equipe e Responsável
+        # --- CARDS DE PERFIL ---
         resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
         equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Expansão Ensina Mais"
 
@@ -118,9 +112,9 @@ if arquivo:
         
         c1, c2 = st.columns(2)
         with c1: st.markdown(f'<div class="card"><div class="card-title">Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
-        with c2: st.markdown(f'<div class="card"><div class="card-title">Andamento</div><div class="card-value">{andamento}</div></div>', unsafe_allow_html=True)
+        with c2: st.markdown(f'<div class="card"><div class="card-title">Em Andamento</div><div class="card-value">{andamento}</div></div>', unsafe_allow_html=True)
 
-        # --- GRÁFICO DE PERDAS ---
+        # --- DETALHE DAS PERDAS ---
         st.divider()
         st.markdown("### 🚫 DETALHE DAS PERDAS")
         perdidos = df[df["Status"] == "Perdido"]
@@ -130,10 +124,10 @@ if arquivo:
             fig_loss.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_loss, use_container_width=True)
 
-        # --- BOTÃO SALVAR ---
+        # --- SALVAMENTO ---
         st.sidebar.markdown("---")
         if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_ref}"):
-            with st.spinner("A guardar no histórico..."):
+            with st.spinner("Enviando para o histórico..."):
                 try:
                     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
                     creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.environ.get("CREDENCIAIS_GOOGLE")), scope)
@@ -142,16 +136,13 @@ if arquivo:
                     try: ws = sh.worksheet(marca)
                     except: ws = sh.add_worksheet(title=marca, rows="1000", cols="20")
                     
-                    # Cálculo simples de taxa para histórico
-                    taxa = f"{(andamento/total*100):.1f}%" if total > 0 else "0%"
-                    
                     ws.append_row([
                         datetime.now().strftime('%d/%m/%Y'), datetime.now().strftime('%H:%M:%S'), 
-                        semana_ref, resp_v, equipe_v, total, andamento, (total-andamento), taxa
+                        semana_ref, resp_v, equipe_v, total, andamento, (total-andamento), f"{(andamento/total*100):.1f}%"
                     ])
                     st.sidebar.success(f"✅ {semana_ref} de {marca} salva!")
                 except Exception as e:
-                    st.sidebar.error(f"Erro ao guardar: {e}")
+                    st.sidebar.error(f"Erro ao salvar: {e}")
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
