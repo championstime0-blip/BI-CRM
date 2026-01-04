@@ -105,53 +105,49 @@ def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
 
 # =========================
-# MOTOR DE PROCESSAMENTO (CORRIGIDO)
+# MOTOR DE PROCESSAMENTO (CORRIGIDO PARA EQUIPE)
 # =========================
 def load_csv(file):
-    # Encoding Latin-1 para CSV do RD Station
+    # Encoding Latin-1
     raw = file.read().decode("latin-1", errors="ignore")
     sep = ";" if raw.count(";") > raw.count(",") else ","
     file.seek(0)
     return pd.read_csv(file, sep=sep, engine="python", on_bad_lines="skip")
 
 def processar(df):
-    # 1. Limpeza de espaços nos nomes das colunas
+    # 1. Limpeza de espaços
     df.columns = df.columns.str.strip()
     
-    # 2. Remoção imediata de duplicatas (Ex: dois 'Cargo' ou 'Email')
+    # 2. Remoção imediata de colunas com mesmo nome
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # 3. Mapeamento
+    # 3. Mapeamento Agressivo
     cols_map = {}
     for c in df.columns:
         c_lower = str(c).lower()
-        # Lógica estrita para evitar falsos positivos
         if "fonte" in c_lower and "utm" not in c_lower: cols_map[c] = "Fonte"
         elif "data de cri" in c_lower: cols_map[c] = "Data de Criação"
-        elif "responsavel" in c_lower or "responsável" in c_lower: cols_map[c] = "Responsável"
-        elif "equipe" in c_lower: cols_map[c] = "Equipe"
-        # Mapeamento exato para evitar conflito com 'Anotação do motivo de perda'
+        # Mapeamento específico para Responsável
+        elif "respons" in c_lower and "equipe" not in c_lower: cols_map[c] = "Responsável"
+        # Mapeamento específico para Equipe (Caça "Equipes do responsável")
+        elif "equipes do respons" in c_lower or "equipe" in c_lower: cols_map[c] = "Equipe"
         elif c_lower == "motivo de perda": cols_map[c] = "Motivo de Perda"
         elif c_lower == "etapa": cols_map[c] = "Etapa"
 
     df = df.rename(columns=cols_map)
-    
-    # 4. Segunda Remoção de Duplicatas (Caso o rename tenha criado conflitos)
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # 5. TRAVA DE SEGURANÇA: Garantir que as colunas são Strings Únicas
+    # 4. Tratamento de Dados (Cleaning)
     colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
     
     for col in colunas_texto:
         if col in df.columns:
-            # Se por acaso ainda for DataFrame, pega só a primeira coluna
             if isinstance(df[col], pd.DataFrame):
                 df[col] = df[col].iloc[:, 0]
             
-            # Agora é seguro usar .str
+            # Limpeza de caracteres especiais
             df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
         else:
-            # Se a coluna não existir, cria vazia para não quebrar o código
             df[col] = "N/A"
 
     df["Etapa"] = df["Etapa"].astype(str).str.strip()
@@ -170,14 +166,13 @@ def processar(df):
     return df
 
 # =========================
-# DASHBOARD LÓGICO
+# DASHBOARD
 # =========================
 def dashboard(df, marca):
     total = len(df)
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
     
-    # KPIs Topo
     c1, c2 = st.columns(2)
     with c1: card("Leads Totais", total)
     with c2: card("Leads em Andamento", len(em_andamento))
@@ -198,7 +193,6 @@ def dashboard(df, marca):
             fig_pie.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # Top 3 (Seu HTML Original)
             st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🏆</span>TOP 3 CANAIS DE AQUISIÇÃO</div>', unsafe_allow_html=True)
             top3 = df_fonte.head(3)
             max_val = top3['Qtd'].max() if not top3.empty else 1
@@ -226,7 +220,6 @@ def dashboard(df, marca):
         df_funil = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
         df_funil["Percentual"] = (df_funil["Qtd"] / total * 100).round(1) if total > 0 else 0
         
-        # Lógica Avançada de Taxa
         avanco_list = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
         df['Etapa_Clean'] = df['Etapa'].str.strip()
         qtd_avanco = len(df[df['Etapa_Clean'].isin(avanco_list)])
@@ -287,11 +280,21 @@ if arquivo:
         df = load_csv(arquivo)
         df = processar(df)
         
-        # Perfil
+        # --- LÓGICA DE RECUPERAÇÃO DA EQUIPE ---
+        # 1. Tenta pegar a moda da coluna 'Equipe'
         resp = df["Responsável"].mode()[0] if not df["Responsável"].empty else "N/A"
-        equipe = df["Equipe"].mode()[0] if not df["Equipe"].empty else "Geral"
-        if equipe in ["nan", "ExpansÃ£o", ""]: equipe = "Expansão Ensina Mais"
         
+        equipe_raw = "N/A"
+        if "Equipe" in df.columns and not df["Equipe"].empty:
+             equipe_raw = df["Equipe"].mode()[0]
+
+        # 2. Correção forçada se vier com caracteres estranhos ou vazio
+        if any(x in str(equipe_raw) for x in ["Expans", "Ensina", "Geral", "nan", "N/A"]):
+             equipe = "Expansão Ensina Mais"
+        else:
+             equipe = equipe_raw
+
+        # --- EXIBIÇÃO ---
         st.markdown(f"""
         <div class="profile-header">
             <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp}</span></div>
