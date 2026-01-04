@@ -67,7 +67,7 @@ def carregar_dados(marca):
         sh = client.open("BI_Historico")
         ws = sh.worksheet(marca)
         
-        # Usa get_all_values para evitar erro de cabeçalho duplicado
+        # Leitura bruta para evitar erro de cabeçalho duplicado
         dados_brutos = ws.get_all_values()
         
         if not dados_brutos:
@@ -78,7 +78,7 @@ def carregar_dados(marca):
         
         df = pd.DataFrame(linhas, columns=headers)
         
-        # Remove colunas vazias geradas pelo Sheets
+        # Remove colunas vazias
         cols_validas = [c for c in df.columns if str(c).strip() != ""]
         df = df[cols_validas]
         
@@ -113,7 +113,7 @@ if not df.empty:
     
     df = df.rename(columns=cols_map)
     
-    # --- TRATAMENTO DE DADOS (CORREÇÃO DO ERRO) ---
+    # --- TRATAMENTO DE DADOS ---
     
     # 1. Data
     if "Data" in df.columns:
@@ -125,10 +125,8 @@ if not df.empty:
         if col_num in df.columns:
             df[col_num] = pd.to_numeric(df[col_num], errors='coerce').fillna(0).astype(int)
 
-    # 3. Taxa (AQUI ESTAVA O ERRO)
-    # A correção: usamos 'coerce' para transformar vazios em NaN, e depois fillna(0.0)
+    # 3. Taxa (Tratamento de string vazia)
     if "Taxa" in df.columns:
-        # Primeiro limpa string, depois converte
         clean_taxa = df['Taxa'].astype(str).str.replace('%', '').str.replace(',', '.')
         df['Taxa_Num'] = pd.to_numeric(clean_taxa, errors='coerce').fillna(0.0)
     else:
@@ -143,11 +141,9 @@ if not df.empty:
     st.sidebar.divider()
     st.sidebar.header("🔍 Filtros")
     
-    # Filtro Ano
     anos = sorted(df['Data'].dt.year.unique().astype(int)) if "Data" in df.columns else []
     ano_sel = st.sidebar.multiselect("Ano", anos, default=anos)
     
-    # Filtro Mês
     if "Data" in df.columns:
         meses_map = {1:"Jan", 2:"Fev", 3:"Mar", 4:"Abr", 5:"Mai", 6:"Jun", 7:"Jul", 8:"Ago", 9:"Set", 10:"Out", 11:"Nov", 12:"Dez"}
         df['Mes_Num'] = df['Data'].dt.month
@@ -157,11 +153,9 @@ if not df.empty:
     else:
         mes_sel = []
 
-    # Filtro Consultor
     consultores = df['Responsável'].unique()
     consultor_sel = st.sidebar.multiselect("Consultor", consultores, default=consultores)
 
-    # Filtro Semana
     semanas = df['Semana'].unique()
     semana_sel = st.sidebar.multiselect("Semana", semanas, default=semanas)
 
@@ -193,8 +187,12 @@ if not df.empty:
         
         with col1:
             st.markdown("### 📈 Evolução da Taxa")
-            # Gráfico de Barras com Rótulos
-            fig_evo = px.bar(df_filtrado, x="Semana", y="Taxa_Num", color="Responsável", barmode="group", text_auto='.1f')
+            # Substituímos a cor 'Cyan' por uma lista manual de cores neon
+            paleta_neon = ['#22d3ee', '#06b6d4', '#0891b2', '#155e75', '#a5f3fc']
+            
+            fig_evo = px.bar(df_filtrado, x="Semana", y="Taxa_Num", color="Responsável", 
+                             barmode="group", text_auto='.1f', 
+                             color_discrete_sequence=paleta_neon) # Correção aqui
             fig_evo.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", yaxis_title="Taxa %")
             st.plotly_chart(fig_evo, use_container_width=True)
 
@@ -202,7 +200,12 @@ if not df.empty:
             st.markdown("### 📡 Top Fontes")
             df_fontes = df_filtrado['Top Fonte'].value_counts().reset_index()
             df_fontes.columns = ['Fonte', 'Qtd']
-            fig_pie = px.pie(df_fontes, names='Fonte', values='Qtd', hole=0.5, color_discrete_sequence=px.colors.sequential.Cyan)
+            
+            # Correção do erro px.colors.sequential.Cyan
+            # Usamos uma lista manual de Hexadecimais para garantir o Neon
+            fig_pie = px.pie(df_fontes, names='Fonte', values='Qtd', hole=0.5, 
+                             color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2', '#164e63'])
+            
             fig_pie.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
 
