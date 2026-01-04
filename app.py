@@ -45,7 +45,8 @@ credentials = load_credentials()
 # ===============================
 @st.cache_data(ttl=600)
 def carregar_base(creds):
-    df, _ = connect_sheet(creds, "CRM_EXPANSAO", "BASE")
+    SHEET_ID = "SEU_ID_REAL_DA_PLANILHA"
+    df, _ = connect_sheet(credentials, SHEET_ID, "BASE")
     return df
 
 # ===============================
