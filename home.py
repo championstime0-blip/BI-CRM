@@ -12,6 +12,7 @@ from datetime import datetime
 # =========================
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
+# CSS Futurista (Idêntico ao seu anterior)
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap');
@@ -42,29 +43,30 @@ st.markdown("""
 # MOTOR DE PROCESSAMENTO
 # =========================
 def processar(arquivo_bruto):
-    # Lendo com encoding Latin-1 (padrão RD CRM)
+    # Lendo o CSV com encoding correto para o RD Station
     df = pd.read_csv(arquivo_bruto, sep=';', encoding='latin-1', on_bad_lines='skip')
     
-    # RESOLUÇÃO DO ERRO 'str': Remove colunas duplicadas pelo nome imediatamente
+    # --- SOLUÇÃO DO ERRO 'str': REMOVE COLUNAS DUPLICADAS ---
+    # Isso mantém apenas a primeira versão de colunas como 'Cargo' ou 'Email'
     df = df.loc[:, ~df.columns.duplicated()].copy()
     
-    # Mapeamento de colunas
-    cols_map = {}
+    # Mapeamento para garantir nomes amigáveis
+    mapeamento = {}
     for c in df.columns:
         c_low = str(c).lower()
-        if "fonte" in c_low: cols_map[c] = "Fonte"
-        elif "data de cri" in c_low: cols_map[c] = "Data de Criação"
-        elif "responsavel" in c_low or "responsÃ¡vel" in c_low: cols_map[c] = "Responsável"
-        elif "equipe" in c_low: cols_map[c] = "Equipe"
-        elif "etapa" in c_low: cols_map[c] = "Etapa"
-        elif "motivo de perda" in c_low: cols_map[c] = "Motivo de Perda"
+        if "fonte" in c_low: mapeamento[c] = "Fonte"
+        elif "data de cri" in c_low: mapeamento[c] = "Data de Criação"
+        elif "responsavel" in c_low or "responsÃ¡vel" in c_low: mapeamento[c] = "Responsável"
+        elif "equipe" in c_low: mapeamento[c] = "Equipe"
+        elif "etapa" in c_low: mapeamento[c] = "Etapa"
+        elif "motivo de perda" in c_low: mapeamento[c] = "Motivo de Perda"
     
-    df = df.rename(columns=cols_map)
+    df = df.rename(columns=mapeamento)
 
-    # Limpeza de strings e correção de Ã£ -> ã e Ã¡ -> á
+    # Limpeza de caracteres especiais (Ã£ -> ã, Ã¡ -> á)
     for col in ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]:
         if col in df.columns:
-            # Garantimos que tratamos uma Series (coluna única)
+            # Forçamos a conversão para string e limpamos a codificação
             df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
 
     def definir_status(row):
@@ -84,7 +86,7 @@ st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_
 
 st.sidebar.header("⚙️ Configurações")
 marca = st.sidebar.selectbox("Marca", ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"])
-semana_ref = st.sidebar.selectbox("Semana", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5"])
+semana_ref = st.sidebar.selectbox("Semana de Referência", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
 
 arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
 
@@ -94,7 +96,7 @@ if arquivo:
         
         # --- CARDS DE PERFIL ---
         resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
-        equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Expansão Ensina Mais"
+        equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
 
         st.markdown(f"""
         <div class="profile-header">
@@ -121,11 +123,11 @@ if arquivo:
             fig_loss.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_loss, use_container_width=True)
 
-        # Botão Salvar (Lógica Render)
+        # Botão Salvar (Lógica para Render)
         st.sidebar.markdown("---")
         if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_ref}"):
-            # Sua lógica de gspread aqui...
-            st.sidebar.success(f"✅ {semana_ref} processada!")
+            # Aqui entraria a conexão com o gspread que configuramos antes
+            st.sidebar.success(f"✅ Dados de {marca} prontos para salvar!")
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
