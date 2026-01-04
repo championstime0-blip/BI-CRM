@@ -20,21 +20,22 @@ st.markdown("""
     font-family: 'Orbitron', sans-serif; font-size: 56px; font-weight: 900; text-transform: uppercase;
     background: linear-gradient(90deg, #22d3ee 0%, #818cf8 50%, #c084fc 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    letter-spacing: 3px; margin-bottom: 10px; text-shadow: 0 0 30px rgba(34, 211, 238, 0.3);
+    letter-spacing: 3px; margin-bottom: 10px;
 }
 .profile-header {
     background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
-    border-left: 5px solid #6366f1; border-radius: 8px; padding: 20px 30px;
-    margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between;
+    border-left: 5px solid #6366f1; border-radius: 8px;
+    padding: 20px 30px; margin-bottom: 15px;
+    display: flex; justify-content: space-between;
 }
-.profile-label { color: #94a3b8; font-family: 'Rajdhani', sans-serif; font-size: 13px; text-transform: uppercase; }
-.profile-value { color: #f8fafc; font-size: 24px; font-weight: 600; font-family: 'Rajdhani', sans-serif; }
+.profile-label { color: #94a3b8; font-size: 13px; text-transform: uppercase; }
+.profile-value { color: #f8fafc; font-size: 24px; font-weight: 600; }
 .card {
     background: linear-gradient(135deg, #111827, #020617);
-    padding: 24px; border-radius: 16px; border: 1px solid #1e293b; text-align: center;
-    box-shadow: 0 0 15px rgba(56,189,248,0.05); height: 100%;
+    padding: 24px; border-radius: 16px;
+    border: 1px solid #1e293b; text-align: center;
 }
-.card-value { font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700; color: #22d3ee; }
+.card-value { font-family: 'Orbitron'; font-size: 36px; color: #22d3ee; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -42,107 +43,166 @@ st.markdown("""
 # MOTOR DE PROCESSAMENTO
 # =========================
 def processar(arquivo_bruto):
-    # Lendo o CSV (RD exporta em Latin-1)
-    df = pd.read_csv(arquivo_bruto, sep=';', encoding='latin-1', on_bad_lines='skip')
-    
-    # SOLUÇÃO PARA O ERRO 'str': Remove colunas duplicadas pelo nome (mantém apenas a primeira)
+    # Leitura do CSV (RD Station)
+    df = pd.read_csv(
+        arquivo_bruto,
+        sep=';',
+        encoding='latin-1',
+        on_bad_lines='skip'
+    )
+
+    # Remove duplicadas ANTES do rename
     df = df.loc[:, ~df.columns.duplicated()].copy()
-    
-    # Mapeamento de colunas principais
+
+    # Mapeamento inteligente de colunas
     mapeamento = {}
     for c in df.columns:
-        c_upper = str(c).upper().strip()
-        if "FONTE" in c_upper: mapeamento[c] = "Fonte"
-        elif "DATA DE CRIA" in c_upper: mapeamento[c] = "Data de Criação"
-        elif "RESPONS" in c_upper and "EQUIPE" not in c_upper: mapeamento[c] = "Responsável"
-        elif "EQUIPE" in c_upper: mapeamento[c] = "Equipe"
-        elif "ETAPA" in c_upper: mapeamento[c] = "Etapa"
-        elif "MOTIVO DE PERDA" in c_upper: mapeamento[c] = "Motivo de Perda"
+        c_up = str(c).upper().strip()
+        if "FONTE" in c_up:
+            mapeamento[c] = "Fonte"
+        elif "DATA DE CRIA" in c_up:
+            mapeamento[c] = "Data de Criação"
+        elif "RESPONS" in c_up and "EQUIPE" not in c_up:
+            mapeamento[c] = "Responsável"
+        elif "EQUIPE" in c_up:
+            mapeamento[c] = "Equipe"
+        elif "ETAPA" in c_up:
+            mapeamento[c] = "Etapa"
+        elif "MOTIVO DE PERDA" in c_up:
+            mapeamento[c] = "Motivo de Perda"
 
     df = df.rename(columns=mapeamento)
 
-    # Limpeza de texto e correção de codificação (Ã£ -> ã)
+    # 🔴 PONTO CRÍTICO: remove duplicadas APÓS o rename
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+
+    # Limpeza segura de texto
     colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
     for col in colunas_texto:
         if col in df.columns:
-            # Garantimos que tratamos apenas a coluna (Series)
-            df[col] = df[col].astype(str).fillna("N/A")
-            df[col] = df[col].str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável")
+            # Garantia absoluta de Series
+            if isinstance(df[col], pd.DataFrame):
+                df[col] = df[col].iloc[:, 0]
 
+            df[col] = (
+                df[col]
+                .astype(str)
+                .fillna("N/A")
+                .str.replace("ExpansÃ£o", "Expansão", regex=False)
+                .str.replace("responsÃ¡vel", "responsável", regex=False)
+            )
+
+    # Definição de status
     def definir_status(row):
         etapa = str(row.get("Etapa", "")).lower()
-        if any(x in etapa for x in ["faturado", "ganho", "venda"]): return "Ganho"
+        if any(x in etapa for x in ["faturado", "ganho", "venda"]):
+            return "Ganho"
+
         motivo = str(row.get("Motivo de Perda", "")).strip().lower()
-        if motivo not in ["", "nan", "none", "-", "0", "nada"]: return "Perdido"
+        if motivo not in ["", "nan", "none", "-", "0", "nada"]:
+            return "Perdido"
+
         return "Em Andamento"
 
     df["Status"] = df.apply(definir_status, axis=1)
+
     return df
 
 # =========================
-# APP INTERFACE
+# INTERFACE DO APP
 # =========================
-st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
+st.markdown('<div class="futuristic-title">BI CRM Expansão</div>', unsafe_allow_html=True)
 
-st.sidebar.header("⚙️ Configurações")
+st.sidebar.header("Configurações")
 marca = st.sidebar.selectbox("Marca", ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"])
-semana_ref = st.sidebar.selectbox("Semana de Referência", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
+semana_ref = st.sidebar.selectbox(
+    "Semana de Referência",
+    ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"]
+)
 
 arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
 
 if arquivo:
     try:
         df = processar(arquivo)
-        
-        # --- CARDS DE PERFIL ---
+
         resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
         equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Expansão Ensina Mais"
 
         st.markdown(f"""
         <div class="profile-header">
-            <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp_v}</span></div>
-            <div class="profile-divider"></div>
-            <div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe_v}</span></div>
+            <div>
+                <div class="profile-label">Responsável</div>
+                <div class="profile-value">{resp_v}</div>
+            </div>
+            <div>
+                <div class="profile-label">Equipe</div>
+                <div class="profile-value">{equipe_v}</div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # --- KPIs ---
         total = len(df)
         andamento = len(df[df["Status"] == "Em Andamento"])
-        
-        c1, c2 = st.columns(2)
-        with c1: st.markdown(f'<div class="card"><div class="card-title">Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
-        with c2: st.markdown(f'<div class="card"><div class="card-title">Em Andamento</div><div class="card-value">{andamento}</div></div>', unsafe_allow_html=True)
 
-        # --- DETALHE DAS PERDAS ---
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f'<div class="card"><div>Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown(f'<div class="card"><div>Em Andamento</div><div class="card-value">{andamento}</div></div>', unsafe_allow_html=True)
+
         st.divider()
-        st.markdown("### 🚫 DETALHE DAS PERDAS")
+        st.markdown("### Detalhe das Perdas")
+
         perdidos = df[df["Status"] == "Perdido"]
         if not perdidos.empty:
             df_loss = perdidos.groupby("Etapa").size().reset_index(name="Qtd")
-            fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", color="Qtd", color_continuous_scale="Purples", text_auto=True)
-            fig_loss.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_loss, use_container_width=True)
+            fig = px.bar(
+                df_loss,
+                x="Etapa",
+                y="Qtd",
+                color="Qtd",
+                text_auto=True,
+                color_continuous_scale="Purples"
+            )
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)"
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-        # --- SALVAMENTO ---
         st.sidebar.markdown("---")
-        if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_ref}"):
-            with st.spinner("Enviando para o histórico..."):
-                try:
-                    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-                    creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.environ.get("CREDENCIAIS_GOOGLE")), scope)
-                    client = gspread.authorize(creds)
-                    sh = client.open("BI_Historico")
-                    try: ws = sh.worksheet(marca)
-                    except: ws = sh.add_worksheet(title=marca, rows="1000", cols="20")
-                    
-                    ws.append_row([
-                        datetime.now().strftime('%d/%m/%Y'), datetime.now().strftime('%H:%M:%S'), 
-                        semana_ref, resp_v, equipe_v, total, andamento, (total-andamento), f"{(andamento/total*100):.1f}%"
-                    ])
-                    st.sidebar.success(f"✅ {semana_ref} de {marca} salva!")
-                except Exception as e:
-                    st.sidebar.error(f"Erro ao salvar: {e}")
+        if st.sidebar.button(f"SALVAR DADOS: {semana_ref}"):
+            scope = [
+                "https://spreadsheets.google.com/feeds",
+                "https://www.googleapis.com/auth/drive"
+            ]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(
+                json.loads(os.environ["CREDENCIAIS_GOOGLE"]),
+                scope
+            )
+            client = gspread.authorize(creds)
+            sh = client.open("BI_Historico")
+
+            try:
+                ws = sh.worksheet(marca)
+            except:
+                ws = sh.add_worksheet(title=marca, rows="1000", cols="20")
+
+            ws.append_row([
+                datetime.now().strftime('%d/%m/%Y'),
+                datetime.now().strftime('%H:%M:%S'),
+                semana_ref,
+                resp_v,
+                equipe_v,
+                total,
+                andamento,
+                total - andamento,
+                f"{(andamento / total * 100):.1f}%"
+            ])
+
+            st.sidebar.success("Dados salvos com sucesso.")
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
