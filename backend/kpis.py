@@ -1,17 +1,14 @@
 def calcular_kpis(df):
     total = len(df)
 
-    perdidos = df[df["Status"] == "Perdido"]
-    em_andamento = df[df["Status"] == "Em Andamento"]
+    perdidos = df[df["Status"].str.lower() == "perdido"]
+    andamento = df[df["Status"].str.lower().str.contains("andamento", na=False)]
 
-    perda_sem_resposta = df[
-        (df["Etapa"].str.strip() == "Aguardando Resposta") &
-        (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))
-    ]
+    aguardando = df[df["Etapa"].str.lower().str.contains("aguardando", na=False)]
 
     return {
         "total": total,
-        "perdidos_df": perdidos,
-        "em_andamento_df": em_andamento,
-        "perda_sem_resposta_df": perda_sem_resposta
+        "perdidos": len(perdidos),
+        "andamento": len(andamento),
+        "aguardando": len(aguardando)
     }
