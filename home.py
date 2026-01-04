@@ -12,7 +12,6 @@ from datetime import datetime
 # =========================
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
-# CSS Futurista (Idêntico ao seu anterior)
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap');
@@ -43,30 +42,33 @@ st.markdown("""
 # MOTOR DE PROCESSAMENTO
 # =========================
 def processar(arquivo_bruto):
-    # Lendo o CSV com encoding correto para o RD Station
+    # Lemos em latin-1 (padrão RD CRM)
     df = pd.read_csv(arquivo_bruto, sep=';', encoding='latin-1', on_bad_lines='skip')
     
-    # --- SOLUÇÃO DO ERRO 'str': REMOVE COLUNAS DUPLICADAS ---
-    # Isso mantém apenas a primeira versão de colunas como 'Cargo' ou 'Email'
+    # 1. Limpeza inicial de colunas vazias ou duplicadas no arquivo original
     df = df.loc[:, ~df.columns.duplicated()].copy()
     
-    # Mapeamento para garantir nomes amigáveis
-    mapeamento = {}
+    # 2. Mapeamento Inteligente
+    cols_map = {}
     for c in df.columns:
         c_low = str(c).lower()
-        if "fonte" in c_low: mapeamento[c] = "Fonte"
-        elif "data de cri" in c_low: mapeamento[c] = "Data de Criação"
-        elif "responsavel" in c_low or "responsÃ¡vel" in c_low: mapeamento[c] = "Responsável"
-        elif "equipe" in c_low: mapeamento[c] = "Equipe"
-        elif "etapa" in c_low: mapeamento[c] = "Etapa"
-        elif "motivo de perda" in c_low: mapeamento[c] = "Motivo de Perda"
+        if "fonte" in c_low and "utm" not in c_low: cols_map[c] = "Fonte"
+        elif "data de cria" in c_low or "data de cri" in c_low: cols_map[c] = "Data de Criação"
+        elif "respons" in c_low and "equipe" not in c_low: cols_map[c] = "Responsável"
+        elif "equipe" in c_low: cols_map[c] = "Equipe"
+        elif "etapa" == c_low: cols_map[c] = "Etapa"
+        elif "motivo de perda" == c_low: cols_map[c] = "Motivo de Perda"
     
-    df = df.rename(columns=mapeamento)
+    df = df.rename(columns=cols_map)
 
-    # Limpeza de caracteres especiais (Ã£ -> ã, Ã¡ -> á)
+    # --- VACINA CRÍTICA ---
+    # Se o rename criou colunas com o mesmo nome (ex: duas colunas 'Fonte'), mantemos apenas a primeira.
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+
+    # 3. Limpeza de Strings (Correção de acentos quebrados do RD)
     for col in ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]:
         if col in df.columns:
-            # Forçamos a conversão para string e limpamos a codificação
+            # Forçamos converter para texto e limpamos o lixo eletrônico
             df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
 
     def definir_status(row):
@@ -96,7 +98,7 @@ if arquivo:
         
         # --- CARDS DE PERFIL ---
         resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
-        equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
+        equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Expansão Ensina Mais"
 
         st.markdown(f"""
         <div class="profile-header">
@@ -113,7 +115,7 @@ if arquivo:
         with c1: st.markdown(f'<div class="card"><div class="card-title">Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
         with c2: st.markdown(f'<div class="card"><div class="card-title">Andamento</div><div class="card-value">{andamento}</div></div>', unsafe_allow_html=True)
 
-        # Gráfico de Perdas
+        # --- DETALHE DAS PERDAS ---
         st.divider()
         st.markdown("### 🚫 DETALHE DAS PERDAS")
         perdidos = df[df["Status"] == "Perdido"]
@@ -123,11 +125,30 @@ if arquivo:
             fig_loss.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_loss, use_container_width=True)
 
-        # Botão Salvar (Lógica para Render)
-        st.sidebar.markdown("---")
+        # --- SALVAMENTO (Google Sheets) ---
         if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_ref}"):
-            # Aqui entraria a conexão com o gspread que configuramos antes
-            st.sidebar.success(f"✅ Dados de {marca} prontos para salvar!")
+            with st.spinner("Salvando no histórico..."):
+                try:
+                    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                    creds_json = os.environ.get("gcp_service_account")
+                    creds_dict = json.loads(creds_json)
+                    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+                    client = gspread.authorize(creds)
+                    sh = client.open("BI_Historico")
+                    try: ws = sh.worksheet(marca)
+                    except: ws = sh.add_worksheet(title=marca, rows="1000", cols="20")
+                    
+                    # Cálculo da Taxa
+                    taxa = f"{(andamento/total*100):.1f}%" if total > 0 else "0%"
+                    
+                    ws.append_row([
+                        datetime.now().strftime('%d/%m/%Y'), 
+                        datetime.now().strftime('%H:%M:%S'), 
+                        semana_ref, resp_v, equipe_v, total, andamento, (total-andamento), taxa
+                    ])
+                    st.sidebar.success(f"✅ {semana_ref} registrada com sucesso!")
+                except Exception as e:
+                    st.sidebar.error(f"Erro ao salvar: {e}")
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
