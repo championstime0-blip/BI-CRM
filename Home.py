@@ -7,9 +7,9 @@ import json
 import os
 from datetime import datetime
 
-# ==========================================
-# 1. CONFIGURAÇÃO DA PÁGINA E CSS
-# ==========================================
+# =========================
+# CONFIGURAÇÃO DA PÁGINA
+# =========================
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
 st.markdown("""
@@ -35,58 +35,60 @@ st.markdown("""
     box-shadow: 0 0 15px rgba(56,189,248,0.05); height: 100%;
 }
 .card-value { font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700; color: #22d3ee; }
-.futuristic-sub {
-    font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; text-transform: uppercase;
-    color: #e2e8f0; border-bottom: 1px solid #1e293b; padding-bottom: 8px; margin-top: 30px; margin-bottom: 20px;
-}
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. MOTOR DE PROCESSAMENTO (DEDUPLICADO)
-# ==========================================
+# =========================
+# MOTOR DE PROCESSAMENTO
+# =========================
 def processar(arquivo_bruto):
-    # Força leitura em latin-1 (padrão RD CRM)
+    # O RD CRM exporta em Latin-1. Lemos e forçamos a limpeza imediata.
     df = pd.read_csv(arquivo_bruto, sep=';', encoding='latin-1', on_bad_lines='skip')
     
-    # RESOLUÇÃO DO ERRO 'str': Remove colunas duplicadas pelo nome imediatamente
+    # RESOLUÇÃO DEFINITIVA DO ERRO 'str': 
+    # Mantém apenas a primeira ocorrência de cada nome de coluna.
     df = df.loc[:, ~df.columns.duplicated()].copy()
     
-    # Mapeamento de colunas ignorando caracteres estranhos
-    cols_map = {}
+    # Dicionário de mapeamento para as colunas que o RD exporta
+    mapeamento = {}
     for c in df.columns:
-        c_low = str(c).lower()
-        if "fonte" in c_low: cols_map[c] = "Fonte"
-        elif "data de cri" in c_low: cols_map[c] = "Data de Criação"
-        elif "responsavel" in c_low and "equipe" not in c_low: cols_map[c] = "Responsável"
-        elif "equipe" in c_low: cols_map[c] = "Equipe"
-        elif "etapa" in c_low: cols_map[c] = "Etapa"
-        elif "motivo de perda" in c_low: cols_map[c] = "Motivo de Perda"
-    
-    df = df.rename(columns=cols_map)
+        c_upper = str(c).upper().strip()
+        if "FONTE" in c_upper: mapeamento[c] = "Fonte"
+        elif "DATA DE CRIA" in c_upper: mapeamento[c] = "Data de Criação"
+        elif "RESPONS" in c_upper and "EQUIPE" not in c_upper: mapeamento[c] = "Responsável"
+        elif "EQUIPE" in c_upper: mapeamento[c] = "Equipe"
+        elif "ETAPA" in c_upper: mapeamento[c] = "Etapa"
+        elif "MOTIVO DE PERDA" in c_upper: mapeamento[c] = "Motivo de Perda"
 
-    # Limpeza de texto e correção de "ExpansÃ£o" -> "Expansão"
+    df = df.rename(columns=mapeamento)
+
+    # Garante que as colunas críticas são strings e corrige caracteres (Ã£ -> ã)
     for col in ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
+            # Forçamos a conversão para string e tratamos duplicados residuais
+            if isinstance(df[col], pd.DataFrame):
+                df[col] = df[col].iloc[:, 0]
+            
+            df[col] = df[col].astype(str).fillna("N/A")
+            # Correção manual de codificação para os termos que pediste
+            df[col] = df[col].str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável")
 
-    # Lógica de Status (Ganho, Perdido ou Andamento)
     def definir_status(row):
         etapa = str(row.get("Etapa", "")).lower()
         if any(x in etapa for x in ["faturado", "ganho", "venda"]): return "Ganho"
         motivo = str(row.get("Motivo de Perda", "")).strip().lower()
-        if motivo not in ["", "nan", "none", "-", "0", "nada", "nada"]: return "Perdido"
+        if motivo not in ["", "nan", "none", "-", "0", "nada"]: return "Perdido"
         return "Em Andamento"
 
     df["Status"] = df.apply(definir_status, axis=1)
     return df
 
-# ==========================================
-# 3. INTERFACE E SIDEBAR
-# ==========================================
+# =========================
+# APP INTERFACE
+# =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
-# Menu Lateral com opções de Semana
+# Sidebar com seletores
 st.sidebar.header("⚙️ Filtros de Registro")
 marca = st.sidebar.selectbox("Marca", ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"])
 semana_ref = st.sidebar.selectbox("Semana de Referência", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
@@ -97,7 +99,8 @@ if arquivo:
     try:
         df = processar(arquivo)
         
-        # --- CARDS DE PERFIL ---
+        # --- CABEÇALHO DE PERFIL ---
+        # Pegamos o primeiro valor válido da coluna Equipe e Responsável
         resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
         equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Expansão Ensina Mais"
 
@@ -117,44 +120,38 @@ if arquivo:
         with c1: st.markdown(f'<div class="card"><div class="card-title">Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
         with c2: st.markdown(f'<div class="card"><div class="card-title">Andamento</div><div class="card-value">{andamento}</div></div>', unsafe_allow_html=True)
 
-        # --- DETALHE DAS PERDAS ---
-        st.markdown('<div class="futuristic-sub">🚫 DETALHE DAS PERDAS</div>', unsafe_allow_html=True)
+        # --- GRÁFICO DE PERDAS ---
+        st.divider()
+        st.markdown("### 🚫 DETALHE DAS PERDAS")
         perdidos = df[df["Status"] == "Perdido"]
-        
         if not perdidos.empty:
             df_loss = perdidos.groupby("Etapa").size().reset_index(name="Qtd")
             fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", color="Qtd", color_continuous_scale="Purples", text_auto=True)
             fig_loss.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_loss, use_container_width=True)
 
-        # --- BOTÃO DE SALVAMENTO ---
+        # --- BOTÃO SALVAR ---
         st.sidebar.markdown("---")
-        if st.sidebar.button(f"💾 SALVAR DADOS: {semana_ref}"):
-            with st.spinner(f"Salvando dados de {marca}..."):
+        if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_ref}"):
+            with st.spinner("A guardar no histórico..."):
                 try:
-                    # Conexão Google Sheets
                     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
                     creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.environ.get("CREDENCIAIS_GOOGLE")), scope)
                     client = gspread.authorize(creds)
                     sh = client.open("BI_Historico")
-                    
                     try: ws = sh.worksheet(marca)
                     except: ws = sh.add_worksheet(title=marca, rows="1000", cols="20")
                     
-                    # Cálculo da Taxa de Avanço Real (Exemplo)
-                    # (Qualificados / Total - Sem Resposta)
-                    # Aqui você pode aplicar a sua fórmula específica de avanço
-                    taxa_val = f"{(andamento/total*100):.1f}%" if total > 0 else "0%"
+                    # Cálculo simples de taxa para histórico
+                    taxa = f"{(andamento/total*100):.1f}%" if total > 0 else "0%"
                     
                     ws.append_row([
-                        datetime.now().strftime('%d/%m/%Y'), 
-                        datetime.now().strftime('%H:%M:%S'), 
-                        semana_ref, resp_v, equipe_v, total, andamento, (total-andamento), taxa_val
+                        datetime.now().strftime('%d/%m/%Y'), datetime.now().strftime('%H:%M:%S'), 
+                        semana_ref, resp_v, equipe_v, total, andamento, (total-andamento), taxa
                     ])
-                    st.sidebar.success(f"✅ {semana_ref} registrada!")
-                    st.balloons()
+                    st.sidebar.success(f"✅ {semana_ref} de {marca} salva!")
                 except Exception as e:
-                    st.sidebar.error(f"Erro no Google Sheets: {e}")
+                    st.sidebar.error(f"Erro ao guardar: {e}")
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
