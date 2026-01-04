@@ -8,9 +8,9 @@ import json
 import os
 from datetime import datetime
 
-# =========================
-# CONFIGURAÇÃO E CSS
-# =========================
+# ==========================================
+# 1. CONFIGURAÇÃO DA PÁGINA E CSS
+# ==========================================
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
 st.markdown("""
@@ -35,11 +35,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# =========================
-# MOTOR DE PROCESSAMENTO
-# =========================
-def identificar_colunas(df):
-    # Remove colunas duplicadas pelo nome antes de renomear
+# ==========================================
+# 2. MOTOR DE PROCESSAMENTO (BLINDADO)
+# ==========================================
+def identificar_e_limpar_colunas(df):
+    # REMOVE COLUNAS DUPLICADAS PELO NOME (Causa raiz do erro)
+    # Se houver duas colunas "Fonte", ele mantém apenas a primeira.
     df = df.loc[:, ~df.columns.duplicated()].copy()
     
     mapeamento = {}
@@ -52,7 +53,10 @@ def identificar_colunas(df):
         elif c_norm == "etapa": mapeamento[c] = "Etapa"
         elif "motivo" in c_norm: mapeamento[c] = "Motivo de Perda"
     
-    return df.rename(columns=mapeamento)
+    df = df.rename(columns=mapeamento)
+    # Garante que após renomear não existam duplicatas criadas pelo mapeamento
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    return df
 
 def carregar_csv(arquivo):
     try:
@@ -65,9 +69,9 @@ def carregar_csv(arquivo):
         st.error(f"Erro na leitura: {e}")
         return None
 
-# =========================
-# INTERFACE
-# =========================
+# ==========================================
+# 3. INTERFACE
+# ==========================================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
 MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
@@ -78,34 +82,23 @@ if arquivo:
     df_raw = carregar_csv(arquivo)
     
     if df_raw is not None:
-        df = identificar_colunas(df_raw)
+        df = identificar_e_limpar_colunas(df_raw)
         
-        # --- SOLUÇÃO PARA O ERRO 'str' ---
-        # Garantimos que selecionamos apenas UMA coluna mesmo que o nome se repita
-        def extrair_serie_limpa(dataframe, nome_coluna):
-            if nome_coluna in dataframe.columns:
-                col = dataframe[nome_coluna]
-                # Se for DataFrame (duplicada), pega a primeira coluna
-                if isinstance(col, pd.DataFrame):
-                    col = col.iloc[:, 0]
-                return col.astype(str).fillna("")
-            return pd.Series([""] * len(dataframe)).astype(str)
+        # Garante que colunas essenciais são Series (1D)
+        for col in ["Fonte", "Etapa", "Motivo de Perda", "Data de Criação"]:
+            if col not in df.columns:
+                df[col] = "" if col != "Data de Criação" else pd.NaT
 
-        col_etapa = extrair_serie_limpa(df, "Etapa")
-        col_motivo = extrair_serie_limpa(df, "Motivo de Perda")
-        
-        # Aplicamos as transformações na Series individual
-        df["Etapa_Clean"] = col_etapa
-        df["Motivo_Clean"] = col_motivo
-
-        # Conversão de Data
+        # Processamento de Texto e Data
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
         df = df.dropna(subset=["Data de Criação"])
+        df["Etapa_Clean"] = df["Etapa"].astype(str).str.lower().fillna("")
+        df["Motivo_Clean"] = df["Motivo de Perda"].astype(str).str.lower().fillna("")
 
         # Lógica de Status
         def definir_status(row):
-            et = str(row["Etapa_Clean"]).lower()
-            mt = str(row["Motivo_Clean"]).lower()
+            et = row["Etapa_Clean"]
+            mt = row["Motivo_Clean"]
             if any(x in et for x in ["ganho", "venda", "faturado"]): return "Ganho"
             if mt.strip() != "" and mt.strip() != "nan": return "Perdido"
             return "Em Andamento"
@@ -116,14 +109,17 @@ if arquivo:
         total = len(df)
         em_andamento = len(df[df["Status"] == "Em Andamento"])
         
-        # Filtro Sem Resposta (Usando as colunas limpas)
-        mask_sem_resp = (df["Etapa_Clean"].str.lower().str.contains("aguardando resposta", na=False)) & \
-                        (df["Motivo_Clean"].str.lower().str.contains("sem resposta", na=False))
+        # Filtro Sem Resposta (Blindado contra multi-dimensão)
+        mask_sem_resp = (df["Etapa_Clean"].str.contains("aguardando resposta", na=False)) & \
+                        (df["Motivo_Clean"].str.contains("sem resposta", na=False))
         qtd_sem_resp = len(df[mask_sem_resp])
 
-        # Exibição
+        # Identidade Superior
         resp = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
-        st.markdown(f'<div class="profile-header"><span><b>Responsável:</b> {resp}</span><span><b>Marca:</b> {marca_selecionada}</span></div>', unsafe_allow_html=True)
+        min_d = df["Data de Criação"].min().strftime('%d/%m/%Y')
+        max_d = df["Data de Criação"].max().strftime('%d/%m/%Y')
+
+        st.markdown(f'<div class="profile-header"><span><b>Responsável:</b> {resp}</span><span><b>Recorte:</b> {min_d} - {max_d}</span></div>', unsafe_allow_html=True)
 
         c1, c2 = st.columns(2)
         with c1: st.markdown(f'<div class="card"><div>Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
@@ -132,8 +128,10 @@ if arquivo:
         # Gráficos
         st.divider()
         col_a, col_b = st.columns(2)
+        
         with col_a:
             st.markdown('##### 📡 Marketing & Fontes')
+            # Aqui o erro acontecia: reset_index garante 1D
             df_f = df["Fonte"].value_counts().reset_index()
             df_f.columns = ['Fonte', 'Qtd']
             fig_p = px.pie(df_f, values='Qtd', names='Fonte', hole=0.5, color_discrete_sequence=px.colors.sequential.Blues_r)
@@ -142,17 +140,18 @@ if arquivo:
 
         with col_b:
             st.markdown('##### 📉 Funil de Vendas')
-            ordem = ["Sem contato", "Aguardando Resposta", "Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
+            ordem = ["sem contato", "aguardando resposta", "confirmou interesse", "qualificado", "reunião agendada", "reunião realizada", "follow-up", "negociação", "em aprovação", "faturado"]
             df_funil = df.groupby("Etapa_Clean").size().reindex(ordem).fillna(0).reset_index(name="Qtd")
             fig_f = px.bar(df_funil, x="Qtd", y="Etapa_Clean", orientation='h', color="Qtd", color_continuous_scale="Blues")
             fig_f.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_f, use_container_width=True)
 
-        # Salvar
-        if st.button("🚀 SALVAR NO GOOGLE SHEETS"):
+        # Salvar Google Sheets
+        st.divider()
+        if st.button("🚀 SALVAR DADOS NO GOOGLE SHEETS"):
             try:
                 etapas_ok = ["qualificado", "reunião agendada", "reunião realizada", "follow-up", "negociação", "em aprovação", "faturado"]
-                qtd_ok = len(df[df["Etapa_Clean"].str.lower().isin(etapas_ok)])
+                qtd_ok = len(df[df["Etapa_Clean"].isin(etapas_ok)])
                 base = total - qtd_sem_resp
                 taxa = (qtd_ok / base * 100) if base > 0 else 0
                 
@@ -166,11 +165,13 @@ if arquivo:
                     ws.append_row(["Data", "Hora", "Semana", "Recorte", "Responsavel", "Equipe", "Total", "Andamento", "Perdidos", "Sem Resposta", "Taxa", "Top Fonte"])
 
                 agora = datetime.now()
+                top_f = df_f.iloc[0]['Fonte'] if not df_f.empty else "N/A"
+                
                 ws.append_row([
                     agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), agora.strftime('%Y-W%W'),
-                    f"{df['Data de Criação'].min().strftime('%d/%m/%Y')} a {df['Data de Criação'].max().strftime('%d/%m/%Y')}", 
-                    str(resp), "Geral", int(total), int(em_andamento), int(total-em_andamento), int(qtd_sem_resp), f"{taxa:.1f}%", str(df_f.iloc[0]['Fonte'] if not df_f.empty else "N/A")
+                    f"{min_d} a {max_d}", str(resp), "Geral", int(total), int(em_andamento), int(total-em_andamento), int(qtd_sem_resp), f"{taxa:.1f}%", str(top_f)
                 ])
-                st.success("✅ Salvo!")
+                st.success("✅ Dados salvos com sucesso!")
+                st.balloons()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
