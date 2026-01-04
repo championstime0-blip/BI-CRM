@@ -89,20 +89,24 @@ def load_csv(file):
     return pd.read_csv(file, sep=sep, engine="python", on_bad_lines="skip")
 
 def processar(df):
+    # Vacina contra colunas duplicadas
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df.columns = df.columns.astype(str).str.strip()
+    
     cols_map = {}
     for c in df.columns:
         c_low = c.lower()
         if any(x in c_low for x in ["fonte", "origem", "source", "conversion origin"]): cols_map[c] = "Fonte"
         elif any(x in c_low for x in ["data de cri", "data da cri", "created date"]): cols_map[c] = "Data de Criação"
         elif any(x in c_low for x in ["dono", "respons", "owner"]): cols_map[c] = "Responsável"
-        elif any(x in c_low for x in ["equipe", "team"]): cols_map[c] = "Equipe"
+        # AJUSTE DA EQUIPE (Detectando variação de caracteres especiais do CSV)
+        elif any(x in c_low for x in ["equipe", "team", "equipes do respons"]): cols_map[c] = "Equipe"
         elif c_low == "etapa": cols_map[c] = "Etapa"
         elif "motivo" in c_low: cols_map[c] = "Motivo de Perda"
     
     df = df.rename(columns=cols_map)
     df = df.loc[:, ~df.columns.duplicated()].copy()
+    
     df["Etapa"] = df["Etapa"].astype(str).str.strip()
     df["Motivo de Perda"] = df.get("Motivo de Perda", pd.Series([""]*len(df))).astype(str).fillna("")
     
@@ -168,10 +172,9 @@ def dashboard(df):
         taxa = (qtd_ok / base_real * 100) if base_real > 0 else 0
         st.markdown(f'<div class="funnel-card"><div style="color:#94a3b8; font-size:14px; text-transform:uppercase; font-family:Rajdhani;">🚀 Taxa de Avanço Real</div><div class="funnel-percent">{taxa:.1f}%</div></div>', unsafe_allow_html=True)
 
-    # --- GRÁFICO DE PERDAS (FUTURISTA) ---
+    # --- PERDAS ---
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS")
-    
     cl1, cl2 = st.columns(2)
     with cl1: card_kpi("Leads Improdutivos (Total)", len(perdidos))
     with cl2: card_kpi("Perda: Sem Resposta", len(perda_especifica))
@@ -179,27 +182,11 @@ def dashboard(df):
     st.write("") 
     df_loss = perdidos.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
     df_loss["Pct"] = (df_loss["Qtd"] / total * 100).round(1)
-    # Criando label estilizada
     df_loss["Label"] = df_loss.apply(lambda x: f"{int(x['Qtd'])} ({x['Pct']}%)", axis=1)
 
     fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", text="Label", color="Qtd", color_continuous_scale="Purples")
-    
-    # Estilização Neon nas Barras de Perda
-    fig_loss.update_traces(
-        textposition='outside', 
-        marker_line_color='#818cf8', 
-        marker_line_width=1.5,
-        textfont=dict(family="Orbitron", size=11, color="#e2e8f0")
-    )
-    fig_loss.update_layout(
-        template="plotly_dark", 
-        plot_bgcolor="rgba(0,0,0,0)", 
-        paper_bgcolor="rgba(0,0,0,0)", 
-        showlegend=False,
-        font_family="Rajdhani",
-        xaxis_title="",
-        yaxis_title="Volume de Perdas"
-    )
+    fig_loss.update_traces(textposition='outside', marker_line_color='#818cf8', marker_line_width=1.5, textfont=dict(family="Orbitron", size=11, color="#e2e8f0"))
+    fig_loss.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, font_family="Rajdhani", xaxis_title="", yaxis_title="Volume de Perdas")
     st.plotly_chart(fig_loss, use_container_width=True)
     
     return {"total": total, "and": len(em_andamento), "perd": len(perdidos), "sr": len(perda_especifica), "tx": taxa, "top": df_fonte.iloc[0]['Fonte'] if not df_fonte.empty else "N/A"}
@@ -216,13 +203,24 @@ arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
 if arquivo:
     try:
         df = processar(load_csv(arquivo))
-        resp_v = df["Responsável"].mode()[0] if "Responsável" in df.columns and not df["Responsável"].empty else "N/A"
-        equipe_v = df["Equipe"].mode()[0] if "Equipe" in df.columns and not df["Equipe"].empty else "Geral"
         
-        st.markdown(f'<div class="profile-header"><div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp_v}</span></div><div class="profile-divider"></div><div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe_v}</span></div></div>', unsafe_allow_html=True)
+        # Identificação dos dados do Responsável e Equipe
+        resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
+        # BUSCA VALOR NA COLUNA EQUIPE (MAPEADA ANTERIORMENTE)
+        equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
+        
+        st.markdown(f"""
+        <div class="profile-header">
+            <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp_v}</span></div>
+            <div class="profile-divider"></div>
+            <div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe_v}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
 
+        recorte_info = "N/A"
         if "Data de Criação" in df.columns:
             min_d, max_d = df["Data de Criação"].min().strftime('%d/%m/%Y'), df["Data de Criação"].max().strftime('%d/%m/%Y')
+            recorte_info = f"{min_d} a {max_d}"
             st.markdown(f'<div class="date-card"><div style="color:#64748b; font-size:13px; text-transform:uppercase; font-family:Rajdhani;">📅 Recorte Temporal</div><div style="font-family:Orbitron; font-size:18px; color:#94a3b8;">{min_d} a {max_d}</div></div>', unsafe_allow_html=True)
 
         resumo = dashboard(df)
@@ -241,8 +239,8 @@ if arquivo:
                         ws.append_row(["Data", "Hora", "Semana", "Recorte", "Responsável", "Equipe", "Total", "Andamento", "Perdidos", "Sem Resposta", "Taxa", "Top Fonte"])
                     
                     agora = datetime.now()
-                    ws.append_row([agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), semana_ref, "N/A", resp_v, equipe_v, resumo['total'], resumo['and'], resumo['perd'], resumo['sr'], f"{resumo['tx']:.1f}%", resumo['top']])
-                    st.sidebar.success("✅ Salvo com Sucesso!")
+                    ws.append_row([agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), semana_ref, recorte_info, resp_v, equipe_v, resumo['total'], resumo['and'], resumo['perd'], resumo['sr'], f"{resumo['tx']:.1f}%", resumo['top']])
+                    st.sidebar.success(f"✅ Dados salvos!")
                     st.balloons()
                 except Exception as e: st.sidebar.error(f"Erro: {e}")
 
