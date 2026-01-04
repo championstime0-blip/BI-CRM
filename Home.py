@@ -1,6 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import json
+import os
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
 
 # =========================
 # CONFIGURAÇÃO DA PÁGINA
@@ -8,244 +13,52 @@ import plotly.express as px
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS (NEON/DARK + FONTE FUTURISTA)
-# =========================
-st.markdown("""
-<style>
-/* Importando Fonte Sci-Fi */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@500;700&display=swap');
-
-/* Fundo Geral */
-.stApp { background-color: #0b0f1a; color: #e0e0e0; }
-
-/* --- TÍTULO PRINCIPAL (H1) --- */
-.futuristic-title {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 56px;
-    font-weight: 900;
-    text-transform: uppercase;
-    background: linear-gradient(90deg, #22d3ee 0%, #818cf8 50%, #c084fc 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    letter-spacing: 3px;
-    margin-bottom: 10px;
-    text-shadow: 0 0 30px rgba(34, 211, 238, 0.3);
-}
-
-/* --- SUBTÍTULOS (H2) --- */
-.futuristic-sub {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 24px;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: #e2e8f0;
-    letter-spacing: 2px;
-    border-bottom: 1px solid #1e293b;
-    padding-bottom: 8px;
-    margin-top: 30px;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-}
-
-.sub-icon {
-    margin-right: 12px;
-    font-size: 24px;
-    color: #22d3ee; /* Cyan Neon */
-    text-shadow: 0 0 10px rgba(34, 211, 238, 0.6);
-}
-
-/* --- CARD DE PERFIL (CLEAN TECH) --- */
-.profile-header {
-    background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
-    border-left: 5px solid #6366f1;
-    border-radius: 8px;
-    padding: 20px 30px;
-    margin-bottom: 15px;
-    margin-top: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-}
-
-.profile-group { display: flex; flex-direction: column; }
-
-.profile-label {
-    color: #94a3b8;
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    margin-bottom: 4px;
-}
-
-.profile-value {
-    color: #f8fafc;
-    font-size: 24px;
-    font-weight: 600;
-    font-family: 'Rajdhani', sans-serif;
-}
-
-.profile-divider { width: 1px; height: 40px; background-color: #334155; margin: 0 20px; }
-
-/* Estilo dos Cards de KPI (Neon) */
-.card {
-    background: linear-gradient(135deg, #111827, #020617);
-    padding: 24px;
-    border-radius: 16px;
-    border: 1px solid #1e293b;
-    text-align: center;
-    box-shadow: 0 0 15px rgba(56,189,248,0.05);
-    transition: all 0.3s ease;
-    height: 100%;
-}
-.card:hover {
-    box-shadow: 0 0 25px rgba(56,189,248,0.2);
-    border-color: #38bdf8;
-    transform: translateY(-2px);
-}
-.card-title {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    color: #94a3b8;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    margin-bottom: 8px;
-    min-height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.card-value {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 36px;
-    font-weight: 700;
-    background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-/* --- Card de Recorte de Data --- */
-.date-card {
-    background: rgba(15, 23, 42, 0.4);
-    border: 1px solid #334155;
-    border-radius: 12px;
-    padding: 12px;
-    text-align: center;
-    margin-bottom: 30px;
-}
-.date-label {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: #64748b;
-    margin-bottom: 2px;
-}
-.date-value {
-    font-family: 'Orbitron', sans-serif; /* Fonte Tech para números */
-    font-size: 18px;
-    color: #94a3b8;
-    letter-spacing: 1px;
-}
-
-/* --- Card de Avanço de Funil --- */
-.funnel-card {
-    background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%);
-    border-top: 2px solid #22d3ee;
-    border-radius: 0 0 12px 12px;
-    padding: 15px;
-    text-align: center;
-    margin-top: -10px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-.funnel-label {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    color: #94a3b8;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-}
-.funnel-percent {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 32px;
-    font-weight: 700;
-    color: #22d3ee;
-    margin: 5px 0;
-}
-.funnel-sub { font-size: 10px; color: #64748b; font-style: italic; }
-
-/* --- TOP 3 FONTES --- */
-.top-source-container { margin-top: 25px; padding: 0; }
-.top-item {
-    border-left: 3px solid #22d3ee; 
-    padding: 12px 15px;
-    margin-bottom: 8px;
-    border-radius: 0 8px 8px 0;
-    display: flex; align-items: center; justify-content: space-between;
-    transition: transform 0.2s;
-    border: 1px solid rgba(34, 211, 238, 0.1); border-left-width: 3px;
-}
-.top-item:hover { transform: translateX(5px); border-color: rgba(34, 211, 238, 0.3); }
-.top-rank { 
-    font-family: 'Orbitron', sans-serif; 
-    font-weight: 900; color: #22d3ee; font-size: 16px; margin-right: 12px; min-width: 25px; 
-}
-.top-name { 
-    font-family: 'Rajdhani', sans-serif;
-    color: #f1f5f9; font-weight: 600; font-size: 15px; 
-    flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 10px;
-}
-.top-val-abs { 
-    color: #fff; font-weight: bold; font-size: 14px; display: block; 
-}
-.top-val-pct { color: #94a3b8; font-size: 10px; font-weight: 400; }
-</style>
-""", unsafe_allow_html=True)
-
-# =========================
 # CONSTANTES
 # =========================
-ETAPAS_FUNIL = [
-    "Sem contato",
-    "Aguardando Resposta",
-    "Confirmou Interesse",
-    "Qualificado",
-    "Reunião Agendada",
-    "Reunião Realizada",
-    "Follow-up",
-    "negociação",
-    "em aprovação",
-    "faturado"
-]
-
 MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
+SEMANAS = ["Semana 1", "Semana 2", "Semana 3", "Semana 4"]
+SPREADSHEET_NAME = "BI_CRM_EXPANSAO"
+ABA_HISTORICO = "HISTORICO_KPIS"
 
 # =========================
-# FUNÇÕES VISUAIS
+# GOOGLE SHEETS
 # =========================
-def card(title, value):
-    st.markdown(f"""
-    <div class="card">
-        <div class="card-title">{title}</div>
-        <div class="card-value">{value}</div>
-    </div>
-    """, unsafe_allow_html=True)
+def conectar_google_sheets():
+    cred_json = os.getenv("CREDENCIAIS_GOOGLE")
+    if not cred_json:
+        raise ValueError("CREDENCIAIS_GOOGLE não configurada")
 
-def subheader_futurista(icon, text):
-    st.markdown(f"""
-    <div class="futuristic-sub">
-        <span class="sub-icon">{icon}</span>
-        {text}
-    </div>
-    """, unsafe_allow_html=True)
+    info = json.loads(cred_json)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    return gspread.authorize(creds)
+
+def salvar_dataframe(df, aba_nome, append=False):
+    gc = conectar_google_sheets()
+
+    try:
+        sh = gc.open(SPREADSHEET_NAME)
+    except gspread.SpreadsheetNotFound:
+        sh = gc.create(SPREADSHEET_NAME)
+
+    try:
+        ws = sh.worksheet(aba_nome)
+        if not append:
+            ws.clear()
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=aba_nome, rows=2000, cols=50)
+
+    values = [df.columns.tolist()] + df.values.tolist()
+    if append and ws.get_all_values():
+        ws.append_rows(df.values.tolist())
+    else:
+        ws.update(values)
 
 # =========================
-# MOTOR BLINDADO
+# PROCESSAMENTO
 # =========================
 def load_csv(file):
     raw = file.read().decode("latin-1", errors="ignore")
@@ -255,194 +68,109 @@ def load_csv(file):
 
 def processar(df):
     df.columns = df.columns.str.strip()
-    cols_map = {c: c for c in df.columns}
+
+    mapa = {}
     for c in df.columns:
-        c_lower = c.lower()
-        if c_lower in ["fonte", "origem", "source", "conversion origin", "origem do lead"]:
-            cols_map[c] = "Fonte"
-        if c_lower in ["data de criação", "data da criação", "created date"]:
-            cols_map[c] = "Data de Criação"
-        if c_lower in ["dono do lead", "responsável", "responsavel", "owner"]:
-            cols_map[c] = "Responsável"
-        if c_lower in ["equipe", "equipe do dono do lead", "team"]:
-            cols_map[c] = "Equipe"
-    df = df.rename(columns=cols_map)
+        cl = c.lower()
+        if cl in ["fonte", "origem", "source"]:
+            mapa[c] = "Fonte"
+        elif cl in ["etapa", "stage"]:
+            mapa[c] = "Etapa"
+        elif cl in ["motivo de perda", "loss reason"]:
+            mapa[c] = "Motivo de Perda"
+        elif cl in ["data de criação", "created date"]:
+            mapa[c] = "Data de Criação"
+        else:
+            mapa[c] = c
+
+    df = df.rename(columns=mapa)
     df["Etapa"] = df["Etapa"].astype(str).str.strip()
     df["Motivo de Perda"] = df.get("Motivo de Perda", "").astype(str)
+
     if "Data de Criação" in df.columns:
-        df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
-    
+        df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], errors="coerce", dayfirst=True)
+
     def status(row):
-        etapa_lower = row["Etapa"].lower()
-        if "faturado" in etapa_lower or "ganho" in etapa_lower or "venda" in etapa_lower:
+        etapa = row["Etapa"].lower()
+        motivo = row["Motivo de Perda"].lower()
+        if "faturado" in etapa or "ganho" in etapa:
             return "Ganho"
-        motivo = row["Motivo de Perda"].strip().lower()
-        if motivo not in ["", "nan", "none", "-", "nan"]:
+        if motivo not in ["", "nan", "-", "none"]:
             return "Perdido"
         return "Em Andamento"
+
     df["Status"] = df.apply(status, axis=1)
     return df
 
+def filtrar_semana(df, semana):
+    if "Data de Criação" not in df.columns:
+        return df
+
+    df = df.dropna(subset=["Data de Criação"]).copy()
+    df["Semana"] = df["Data de Criação"].dt.day.apply(
+        lambda d: "Semana 1" if d <= 7 else
+                  "Semana 2" if d <= 14 else
+                  "Semana 3" if d <= 21 else
+                  "Semana 4"
+    )
+    return df[df["Semana"] == semana]
+
 # =========================
-# DASHBOARD
+# KPI AGREGADO
 # =========================
-def dashboard(df, marca):
+def gerar_kpis(df, marca, semana):
     total = len(df)
-    perdidos = df[df["Status"] == "Perdido"]
-    em_andamento = df[df["Status"] == "Em Andamento"]
-    perda_especifica = df[
-        (df["Etapa"].str.strip() == "Aguardando Resposta") &
+    ganhos = len(df[df["Status"] == "Ganho"])
+    perdidos = len(df[df["Status"] == "Perdido"])
+    andamento = len(df[df["Status"] == "Em Andamento"])
+
+    sem_resposta = len(df[
+        (df["Etapa"] == "Aguardando Resposta") &
         (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))
-    ]
+    ])
 
-    # --- KPIs ---
-    c1, c2 = st.columns(2)
-    with c1: card("Leads Totais", total)
-    with c2: card("Leads em Andamento", len(em_andamento))
+    avancados = len(df[df["Etapa"].isin([
+        "Qualificado", "Reunião Agendada", "Reunião Realizada",
+        "Follow-up", "negociação", "em aprovação", "faturado"
+    ])])
 
-    st.divider()
+    base = total - sem_resposta
+    taxa_avanco = round((avancados / base * 100), 1) if base > 0 else 0
 
-    # --- GRÁFICOS ---
-    col_mkt, col_funil = st.columns(2)
-
-    # 1. Marketing
-    with col_mkt:
-        # TÍTULO AJUSTADO
-        subheader_futurista("📡", "MARKETING & FONTES")
-        
-        possible_cols = ["Fonte", "Origem", "Source", "Conversion Origin"]
-        col_fonte = next((c for c in df.columns if c in possible_cols), None)
-
-        if col_fonte:
-            df_fonte = df[col_fonte].value_counts().reset_index()
-            df_fonte.columns = ["Fonte", "Qtd"]
-            neon_palette = ['#22d3ee', '#06b6d4', '#0891b2', '#164e63', '#67e8f9']
-            fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=neon_palette)
-            fig_pie.update_traces(textposition='outside', textinfo='percent+label', marker=dict(line=dict(color='#0b0f1a', width=3)))
-            fig_pie.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, margin=dict(t=20, b=20))
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-            # TOP 3 Renderizado
-            st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🏆</span>TOP 3 CANAIS DE AQUISIÇÃO</div>', unsafe_allow_html=True)
-            
-            top3 = df_fonte.head(3)
-            max_val = top3['Qtd'].max() if not top3.empty else 1
-            html_content = '<div class="top-source-container">'
-            for i, row in top3.iterrows():
-                rank = i + 1
-                nome = row['Fonte']
-                qtd = row['Qtd']
-                bar_width = (qtd / max_val) * 100
-                pct_total = (qtd / total * 100)
-                bg_style = f"background: linear-gradient(90deg, rgba(34, 211, 238, 0.15) {bar_width}%, rgba(15, 23, 42, 0.0) {bar_width}%);"
-                
-                item_html = f'<div class="top-item" style="{bg_style}">'
-                item_html += f'<div style="display:flex; align-items:center; width: 70%;">'
-                item_html += f'<span class="top-rank">#{rank}</span>'
-                item_html += f'<span class="top-name" title="{nome}">{nome}</span>'
-                item_html += f'</div>'
-                item_html += f'<div class="top-val-group">'
-                item_html += f'<span class="top-val-abs">{qtd}</span>'
-                item_html += f'<span class="top-val-pct">{pct_total:.1f}% do total</span>'
-                item_html += f'</div></div>'
-                html_content += item_html
-            html_content += '</div>'
-            st.markdown(html_content, unsafe_allow_html=True)
-        else:
-            st.info("Coluna de 'Fonte' não identificada.")
-
-    # 2. Funil
-    with col_funil:
-        # TÍTULO AJUSTADO
-        subheader_futurista("📉", "DESCIDA DE FUNIL")
-
-        df_funil = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
-        df_funil["Percentual"] = (df_funil["Qtd"] / total * 100).round(1)
-        fig_funil = px.bar(df_funil, x="Qtd", y="Etapa", orientation="h", text=df_funil["Percentual"].astype(str) + "%", color="Qtd", color_continuous_scale="Blues")
-        fig_funil.update_layout(template="plotly_dark", showlegend=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", xaxis_title="Volume", yaxis_title="")
-        st.plotly_chart(fig_funil, use_container_width=True)
-
-        etapas_avanco = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
-        df['Etapa_Clean'] = df['Etapa'].str.strip()
-        qtd_avancados = len(df[df['Etapa_Clean'].isin(etapas_avanco)])
-        qtd_sem_resposta = len(perda_especifica)
-        base_calculo = total - qtd_sem_resposta
-        perc_avanco = (qtd_avancados / base_calculo * 100) if base_calculo > 0 else 0
-
-        st.markdown(f"""
-        <div class="funnel-card">
-            <div class="funnel-label">🚀 Taxa de Avanço Real de Funil</div>
-            <div class="funnel-percent">{perc_avanco:.1f}%</div>
-            <div class="funnel-sub">Leads Qualificados+ / (Total - Sem Resposta)</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.divider()
-
-    # 3. Perdas
-    # TÍTULO AJUSTADO
-    subheader_futurista("🚫", "DETALHE DAS PERDAS")
-    
-    kpi_loss1, kpi_loss2 = st.columns(2)
-    with kpi_loss1: card("Leads Improdutivos (Total Perdido)", len(perdidos))
-    with kpi_loss2: card("Perda: Aguardando s/ Resp.", len(perda_especifica))
-
-    st.write("") 
-
-    df_loss = perdidos.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
-    df_loss["Percentual"] = (df_loss["Qtd"] / total * 100).round(1)
-    df_loss["Label"] = df_loss.apply(lambda x: f"{int(x['Qtd'])}<br>({x['Percentual']}%)", axis=1)
-
-    fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", text="Label", color="Qtd", color_continuous_scale="Blues", title="")
-    fig_loss.update_traces(textposition='outside', marker_line_color='#22d3ee', marker_line_width=1, opacity=0.9, textfont_size=12)
-    fig_loss.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, xaxis_title="", yaxis_title="Leads Perdidos", yaxis=dict(showgrid=False), height=500)
-    st.plotly_chart(fig_loss, use_container_width=True)
+    return pd.DataFrame([{
+        "Data_Salvamento": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Marca": marca,
+        "Semana": semana,
+        "Leads_Totais": total,
+        "Em_Andamento": andamento,
+        "Perdidos": perdidos,
+        "Ganhos": ganhos,
+        "Taxa_Avanco_%": taxa_avanco,
+        "Sem_Resposta": sem_resposta
+    }])
 
 # =========================
-# APP MAIN
+# APP
 # =========================
-# TÍTULO PRINCIPAL (H1) ATUALIZADO
-st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
+st.title("BI CRM Expansão")
 
-marca = st.selectbox("Selecione a Marca", MARCAS)
+marca = st.selectbox("Marca", MARCAS)
+semana = st.selectbox("Semana", SEMANAS)
 arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
 
 if arquivo:
-    try:
-        df = load_csv(arquivo)
-        df = processar(df)
+    df = load_csv(arquivo)
+    df = processar(df)
+    df = filtrar_semana(df, semana)
 
-        resp_val = df["Responsável"].mode()[0] if "Responsável" in df.columns and not df["Responsável"].empty else "Não Identificado"
-        equipe_raw = df["Equipe"].mode()[0] if "Equipe" in df.columns and not df["Equipe"].empty else "Geral"
-        equipe_val = "Expansão Ensina Mais" if equipe_raw in ["Geral", "", "nan"] else equipe_raw
+    if st.button("💾 Salvar Base + KPIs"):
+        # Base detalhada
+        salvar_dataframe(df, f"{marca} - {semana}")
 
-        st.markdown(f"""
-        <div class="profile-header">
-            <div class="profile-group">
-                <span class="profile-label">Responsável</span>
-                <span class="profile-value">{resp_val}</span>
-            </div>
-            <div class="profile-divider"></div>
-            <div class="profile-group">
-                <span class="profile-label">Equipe do Responsável</span>
-                <span class="profile-value">{equipe_val}</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # KPI agregado
+        kpis = gerar_kpis(df, marca, semana)
+        salvar_dataframe(kpis, ABA_HISTORICO, append=True)
 
-        if "Data de Criação" in df.columns and not df["Data de Criação"].isnull().all():
-            min_date = df["Data de Criação"].min().strftime('%d/%m/%Y')
-            max_date = df["Data de Criação"].max().strftime('%d/%m/%Y')
-            st.markdown(f"""
-            <div class="date-card">
-                <div class="date-label">📅 Recorte Temporal da Base</div>
-                <div class="date-value">
-                    {min_date} <span style="color:#64748b; padding:0 10px;">➔</span> {max_date}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        st.success("Base e KPIs salvos com sucesso")
 
-        dashboard(df, marca)
-    except Exception as e:
-        st.error("Erro ao processar o arquivo")
-        st.exception(e)
+    st.dataframe(df, use_container_width=True)
