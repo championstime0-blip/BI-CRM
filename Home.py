@@ -41,48 +41,30 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. MOTOR DE PROCESSAMENTO (BLINDADO)
+# 2. MOTOR DE PROCESSAMENTO
 # ==========================================
 def identificar_colunas(df):
-    """Mapeia colunas ignorando acentos e cases"""
     cols_originais = df.columns.tolist()
     mapeamento = {}
-    
     for c in cols_originais:
         c_norm = str(c).lower().strip()
-        # Data
-        if any(x in c_norm for x in ["data de cri", "data da cri", "created", "criacao"]):
-            mapeamento[c] = "Data de Criação"
-        # Fonte
-        elif any(x in c_norm for x in ["fonte", "origem", "source", "origin"]):
-            mapeamento[c] = "Fonte"
-        # Responsável
-        elif any(x in c_norm for x in ["dono", "respons", "owner"]):
-            mapeamento[c] = "Responsável"
-        # Equipe
-        elif any(x in c_norm for x in ["equipe", "team"]):
-            mapeamento[c] = "Equipe"
-        # Etapa (exato)
-        elif c_norm == "etapa":
-            mapeamento[c] = "Etapa"
-        # Motivo
-        elif "motivo" in c_norm:
-            mapeamento[c] = "Motivo de Perda"
-            
+        if any(x in c_norm for x in ["data de cri", "data da cri", "created", "criacao"]): mapeamento[c] = "Data de Criação"
+        elif any(x in c_norm for x in ["fonte", "origem", "source", "origin"]): mapeamento[c] = "Fonte"
+        elif any(x in c_norm for x in ["dono", "respons", "owner"]): mapeamento[c] = "Responsável"
+        elif any(x in c_norm for x in ["equipe", "team"]): mapeamento[c] = "Equipe"
+        elif c_norm == "etapa": mapeamento[c] = "Etapa"
+        elif "motivo" in c_norm: mapeamento[c] = "Motivo de Perda"
     return df.rename(columns=mapeamento)
 
 def carregar_csv(arquivo):
-    """Tenta ler com múltiplos separadores"""
     try:
-        # Tenta Ponto-e-vírgula (Brasil)
         df = pd.read_csv(arquivo, sep=';', encoding='latin-1')
         if len(df.columns) <= 1:
             arquivo.seek(0)
-            # Tenta Vírgula (Padrão)
             df = pd.read_csv(arquivo, sep=',', encoding='latin-1')
         return df
     except Exception as e:
-        st.error(f"Erro na leitura física do arquivo: {e}")
+        st.error(f"Erro na leitura do arquivo: {e}")
         return None
 
 # ==========================================
@@ -100,38 +82,37 @@ if arquivo:
     if df_raw is not None:
         df = identificar_colunas(df_raw)
         
-        # Validação de Segurança
-        colunas_necessarias = ["Data de Criação", "Etapa", "Fonte"]
-        faltando = [c for c in colunas_necessarias if c not in df.columns]
-        
-        if faltando:
-            st.error(f"❌ Não conseguimos identificar as colunas: {faltando}")
-            st.write("Colunas detectadas no seu arquivo:", df_raw.columns.tolist())
+        # Garante que as colunas existem para não dar erro de Series
+        if "Motivo de Perda" not in df.columns:
+            df["Motivo de Perda"] = ""
+        if "Etapa" not in df.columns:
+            st.error("Coluna 'Etapa' não encontrada.")
             st.stop()
 
-        # Limpeza de Dados
+        # Limpeza e Conversão
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
         df = df.dropna(subset=["Data de Criação"])
-        df["Etapa"] = df["Etapa"].astype(str).fillna("Sem Etapa")
-        df["Motivo de Perda"] = df.get("Motivo de Perda", pd.Series([""])).astype(str).fillna("")
+        
+        # CORREÇÃO DO ERRO: Forçar tudo para string antes de aplicar lower()
+        df["Etapa"] = df["Etapa"].astype(str)
+        df["Motivo de Perda"] = df["Motivo de Perda"].astype(str)
 
-        # Lógica de Status
         def definir_status(row):
             etapa = row["Etapa"].lower()
             motivo = row["Motivo de Perda"].lower()
             if any(x in etapa for x in ["ganho", "venda", "faturado"]): return "Ganho"
-            if motivo != "" and motivo != "nan": return "Perdido"
+            # Se o motivo não for vazio e não for 'nan'
+            if motivo.strip() != "" and motivo.strip() != "nan": return "Perdido"
             return "Em Andamento"
 
         df["Status"] = df.apply(definir_status, axis=1)
 
-        # Extração de Identidade
+        # Dados de Cabeçalho
         resp = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
         equipe = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
         min_d = df["Data de Criação"].min().strftime('%d/%m/%Y')
         max_d = df["Data de Criação"].max().strftime('%d/%m/%Y')
 
-        # Visualização Superior
         st.markdown(f'<div class="profile-header"><span><b>Responsável:</b> {resp}</span><span><b>Equipe:</b> {equipe}</span></div>', unsafe_allow_html=True)
         st.markdown(f'<div style="text-align:center; color:#94a3b8; margin-bottom:20px;">📅 {min_d} até {max_d}</div>', unsafe_allow_html=True)
 
@@ -140,9 +121,9 @@ if arquivo:
         em_andamento = len(df[df["Status"] == "Em Andamento"])
         perdidos = len(df[df["Status"] == "Perdido"])
         
-        # Cálculo de Perda s/ Resposta (Ajustado para evitar erro 0)
-        mask_sem_resp = (df["Etapa"].str.contains("Aguardando Resposta", case=False, na=False)) & \
-                        (df["Motivo de Perda"].str.contains("sem resposta", case=False, na=False))
+        # Filtro Sem Resposta
+        mask_sem_resp = (df["Etapa"].str.lower().str.contains("aguardando resposta", na=False)) & \
+                        (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))
         qtd_sem_resp = len(df[mask_sem_resp])
 
         c1, c2 = st.columns(2)
@@ -152,7 +133,6 @@ if arquivo:
         # Gráficos
         st.divider()
         col_a, col_b = st.columns(2)
-
         with col_a:
             st.markdown('##### 📡 Marketing & Fontes')
             df_f = df["Fonte"].value_counts().reset_index()
@@ -174,13 +154,11 @@ if arquivo:
         if st.button("🚀 SALVAR NA PLANILHA BI_HISTORICO"):
             with st.spinner("Salvando..."):
                 try:
-                    # Cálculo da Taxa
-                    etapas_ok = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
-                    qtd_ok = len(df[df["Etapa"].isin(etapas_ok)])
+                    etapas_ok = ["qualificado", "reunião agendada", "reunião realizada", "follow-up", "negociação", "em aprovação", "faturado"]
+                    qtd_ok = len(df[df["Etapa"].str.lower().isin(etapas_ok)])
                     base = total - qtd_sem_resp
                     taxa = (qtd_ok / base * 100) if base > 0 else 0
                     
-                    # Conexão Google
                     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
                     creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.environ.get("CREDENCIAIS_GOOGLE")), scope)
                     client = gspread.authorize(creds)
@@ -197,7 +175,7 @@ if arquivo:
                     
                     ws.append_row([
                         agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), agora.strftime('%Y-W%W'),
-                        f"{min_d} a {max_d}", resp, equipe, total, em_andamento, perdidos, qtd_sem_resp, f"{taxa:.1f}%", top_f
+                        f"{min_d} a {max_d}", str(resp), str(equipe), int(total), int(em_andamento), int(perdidos), int(qtd_sem_resp), f"{taxa:.1f}%", str(top_f)
                     ])
                     st.success("✅ Salvo com sucesso!")
                 except Exception as e:
