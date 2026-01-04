@@ -20,7 +20,7 @@ st.markdown("""
     font-family: 'Orbitron', sans-serif; font-size: 56px; font-weight: 900; text-transform: uppercase;
     background: linear-gradient(90deg, #22d3ee 0%, #818cf8 50%, #c084fc 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    text-shadow: 0 0 30px rgba(34, 211, 238, 0.3);
+    letter-spacing: 3px; margin-bottom: 10px; text-shadow: 0 0 30px rgba(34, 211, 238, 0.3);
 }
 .profile-header {
     background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
@@ -42,40 +42,45 @@ st.markdown("""
 # CONEXÃO GOOGLE
 # =========================
 def conectar_google():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds_json = os.environ.get("gcp_service_account") or st.secrets.get("gcp_service_account")
-    if not creds_json:
-        st.error("Credenciais não configuradas no Render.")
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_json = os.environ.get("gcp_service_account") or st.secrets.get("gcp_service_account")
+        if not creds_json:
+            return None
+        creds_dict = json.loads(creds_json)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        return gspread.authorize(creds)
+    except:
         return None
-    creds_dict = json.loads(creds_json)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    return gspread.authorize(creds)
 
 # =========================
 # MOTOR DE PROCESSAMENTO
 # =========================
 def processar(arquivo_bruto):
-    # RD CRM exporta em latin-1. Lemos e já removemos colunas duplicadas (Vacina contra erro 'str')
+    # Força leitura em Latin-1 para evitar erros de acentuação
     df = pd.read_csv(arquivo_bruto, sep=';', encoding='latin-1', on_bad_lines='skip')
+    
+    # --- VACINA CONTRA ERRO 'str' ---
+    # Mantém apenas a primeira ocorrência de colunas com o mesmo nome
     df = df.loc[:, ~df.columns.duplicated()].copy()
     
-    # Mapeamento robusto
-    cols_map = {}
+    # Mapeamento dinâmico
+    mapeamento = {}
     for c in df.columns:
         c_low = str(c).lower()
-        if "fonte" in c_low: cols_map[c] = "Fonte"
-        elif "data de cri" in c_low: cols_map[c] = "Data de Criação"
-        elif "responsavel" in c_low and "equipe" not in c_low: cols_map[c] = "Responsável"
-        elif "equipe" in c_low: cols_map[c] = "Equipe"
-        elif "etapa" in c_low: cols_map[c] = "Etapa"
-        elif "motivo de perda" in c_low: cols_map[c] = "Motivo de Perda"
+        if "fonte" in c_low: mapeamento[c] = "Fonte"
+        elif "data de cri" in c_low: mapeamento[c] = "Data de Criação"
+        elif "responsavel" in c_low or "responsÃ¡vel" in c_low: mapeamento[c] = "Responsável"
+        elif "equipe" in c_low: mapeamento[c] = "Equipe"
+        elif "etapa" in c_low: mapeamento[c] = "Etapa"
+        elif "motivo de perda" in c_low: mapeamento[c] = "Motivo de Perda"
     
-    df = df.rename(columns=cols_map)
+    df = df.rename(columns=mapeamento)
 
-    # Limpeza de strings e correção de Ã£/Ã¡
+    # Limpeza de texto e correção de codificação (Ã£ -> ã)
     for col in ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]:
         if col in df.columns:
-            # Forçamos converter para string e limpamos acentuação quebrada
+            # Garante que é uma Series e não um DataFrame antes de usar .str
             df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
 
     def definir_status(row):
@@ -89,7 +94,7 @@ def processar(arquivo_bruto):
     return df
 
 # =========================
-# APP INTERFACE
+# INTERFACE PRINCIPAL
 # =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
@@ -135,7 +140,7 @@ if arquivo:
         # Botão Salvar
         st.sidebar.markdown("---")
         if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_ref}"):
-            with st.spinner("Conectando ao histórico..."):
+            with st.spinner("Salvando no Google Sheets..."):
                 client = conectar_google()
                 if client:
                     sh = client.open("BI_Historico")
@@ -144,8 +149,10 @@ if arquivo:
                     
                     taxa = f"{(andamento/total*100):.1f}%" if total > 0 else "0%"
                     ws.append_row([datetime.now().strftime('%d/%m/%Y'), datetime.now().strftime('%H:%M:%S'), semana_ref, resp_v, equipe_v, total, andamento, (total-andamento), taxa])
-                    st.sidebar.success(f"✅ {semana_ref} salva!")
+                    st.sidebar.success(f"✅ {semana_ref} de {marca} salva!")
                     st.balloons()
+                else:
+                    st.sidebar.error("Erro na conexão com Google.")
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
