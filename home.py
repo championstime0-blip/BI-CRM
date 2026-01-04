@@ -13,7 +13,7 @@ from datetime import datetime
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS (MANTIDA IDÊNTICA)
+# ESTILIZAÇÃO CSS (NEON/DARK)
 # =========================
 st.markdown("""
 <style>
@@ -79,21 +79,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================
-# CONSTANTES E CONEXÃO
+# CONSTANTES & CONEXÃO
 # =========================
 ETAPAS_FUNIL = ["Sem contato", "Aguardando Resposta", "Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
 MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
 
 def conectar_google():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds_json = os.environ.get("gcp_service_account") or st.secrets.get("gcp_service_account")
-    if not creds_json: return None
-    creds_dict = json.loads(creds_json)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    return gspread.authorize(creds)
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_json = os.environ.get("gcp_service_account") or st.secrets.get("gcp_service_account")
+        if not creds_json: return None
+        creds_dict = json.loads(creds_json)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        return None
 
 # =========================
-# FUNÇÕES VISUAIS & PROCESSAMENTO (MANTIDAS)
+# FUNÇÕES VISUAIS
 # =========================
 def card(title, value):
     st.markdown(f'<div class="card"><div class="card-title">{title}</div><div class="card-value">{value}</div></div>', unsafe_allow_html=True)
@@ -101,33 +104,58 @@ def card(title, value):
 def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
 
+# =========================
+# MOTOR DE PROCESSAMENTO (CORRIGIDO)
+# =========================
 def load_csv(file):
+    # Encoding Latin-1 para CSV do RD Station
     raw = file.read().decode("latin-1", errors="ignore")
     sep = ";" if raw.count(";") > raw.count(",") else ","
     file.seek(0)
     return pd.read_csv(file, sep=sep, engine="python", on_bad_lines="skip")
 
 def processar(df):
-    # Tratamento contra duplicatas de colunas
-    df = df.loc[:, ~df.columns.duplicated()].copy()
-    
+    # 1. Limpeza de espaços nos nomes das colunas
     df.columns = df.columns.str.strip()
-    cols_map = {c: c for c in df.columns}
+    
+    # 2. Remoção imediata de duplicatas (Ex: dois 'Cargo' ou 'Email')
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    # 3. Mapeamento
+    cols_map = {}
     for c in df.columns:
-        c_lower = c.lower()
-        if any(x in c_lower for x in ["fonte", "origem", "source"]): cols_map[c] = "Fonte"
-        if any(x in c_lower for x in ["data de cri", "created date"]): cols_map[c] = "Data de Criação"
-        if any(x in c_lower for x in ["respons", "dono", "owner"]): cols_map[c] = "Responsável"
-        if any(x in c_lower for x in ["equipe", "team"]): cols_map[c] = "Equipe"
+        c_lower = str(c).lower()
+        # Lógica estrita para evitar falsos positivos
+        if "fonte" in c_lower and "utm" not in c_lower: cols_map[c] = "Fonte"
+        elif "data de cri" in c_lower: cols_map[c] = "Data de Criação"
+        elif "responsavel" in c_lower or "responsável" in c_lower: cols_map[c] = "Responsável"
+        elif "equipe" in c_lower: cols_map[c] = "Equipe"
+        # Mapeamento exato para evitar conflito com 'Anotação do motivo de perda'
+        elif c_lower == "motivo de perda": cols_map[c] = "Motivo de Perda"
+        elif c_lower == "etapa": cols_map[c] = "Etapa"
+
     df = df.rename(columns=cols_map)
     
-    # Tratamento de Strings e Acentuação
-    for col in ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]:
+    # 4. Segunda Remoção de Duplicatas (Caso o rename tenha criado conflitos)
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    # 5. TRAVA DE SEGURANÇA: Garantir que as colunas são Strings Únicas
+    colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
+    
+    for col in colunas_texto:
         if col in df.columns:
+            # Se por acaso ainda for DataFrame, pega só a primeira coluna
+            if isinstance(df[col], pd.DataFrame):
+                df[col] = df[col].iloc[:, 0]
+            
+            # Agora é seguro usar .str
             df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
+        else:
+            # Se a coluna não existir, cria vazia para não quebrar o código
+            df[col] = "N/A"
 
     df["Etapa"] = df["Etapa"].astype(str).str.strip()
-    df["Motivo de Perda"] = df.get("Motivo de Perda", "").astype(str)
+    
     if "Data de Criação" in df.columns:
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
     
@@ -137,16 +165,19 @@ def processar(df):
         motivo = str(row["Motivo de Perda"]).strip().lower()
         if motivo not in ["", "nan", "none", "-", "nan", "0", "nada"]: return "Perdido"
         return "Em Andamento"
+        
     df["Status"] = df.apply(status, axis=1)
     return df
 
+# =========================
+# DASHBOARD LÓGICO
+# =========================
 def dashboard(df, marca):
-    # Cálculo de métricas
     total = len(df)
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
     
-    # KPIs Visuais
+    # KPIs Topo
     c1, c2 = st.columns(2)
     with c1: card("Leads Totais", total)
     with c2: card("Leads em Andamento", len(em_andamento))
@@ -154,56 +185,90 @@ def dashboard(df, marca):
 
     col_mkt, col_funil = st.columns(2)
     
-    # GRÁFICOS (MANTIDOS IDÊNTICOS)
+    # 1. MKT
     with col_mkt:
         subheader_futurista("📡", "MARKETING & FONTES")
-        possible_cols = ["Fonte", "Origem", "Source"]
-        col_fonte = next((c for c in df.columns if c in possible_cols), None)
-        if col_fonte:
-            df_fonte = df[col_fonte].value_counts().reset_index()
+        if "Fonte" in df.columns:
+            df_fonte = df["Fonte"].value_counts().reset_index()
             df_fonte.columns = ["Fonte", "Qtd"]
-            top_fonte_name = df_fonte.iloc[0]['Fonte'] if not df_fonte.empty else "N/A"
+            top_fonte = df_fonte.iloc[0]['Fonte'] if not df_fonte.empty else "N/A"
             
             fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2'])
             fig_pie.update_traces(textposition='outside', textinfo='percent+label')
             fig_pie.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # (Top 3 Visual renderizado igual ao seu código original...)
+            # Top 3 (Seu HTML Original)
+            st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🏆</span>TOP 3 CANAIS DE AQUISIÇÃO</div>', unsafe_allow_html=True)
+            top3 = df_fonte.head(3)
+            max_val = top3['Qtd'].max() if not top3.empty else 1
+            html = '<div class="top-source-container">'
+            for i, row in top3.iterrows():
+                perc = (row['Qtd']/total*100)
+                wid = (row['Qtd']/max_val*100)
+                html += f'''
+                <div class="top-item" style="background: linear-gradient(90deg, rgba(34, 211, 238, 0.15) {wid}%, rgba(15, 23, 42, 0.0) {wid}%);">
+                    <div style="display:flex; align-items:center; width: 70%;">
+                        <span class="top-rank">#{i+1}</span><span class="top-name">{row['Fonte']}</span>
+                    </div>
+                    <div class="top-val-group">
+                        <span class="top-val-abs">{row['Qtd']}</span><span class="top-val-pct">{perc:.1f}%</span>
+                    </div>
+                </div>'''
+            html += '</div>'
+            st.markdown(html, unsafe_allow_html=True)
         else:
-            top_fonte_name = "N/A"
+            top_fonte = "N/A"
 
+    # 2. Funil
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL")
         df_funil = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
         df_funil["Percentual"] = (df_funil["Qtd"] / total * 100).round(1) if total > 0 else 0
         
-        # Cálculo Taxa Avanço
-        etapas_avanco = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
+        # Lógica Avançada de Taxa
+        avanco_list = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
         df['Etapa_Clean'] = df['Etapa'].str.strip()
-        qtd_avancados = len(df[df['Etapa_Clean'].isin(etapas_avanco)])
+        qtd_avanco = len(df[df['Etapa_Clean'].isin(avanco_list)])
         
-        perda_especifica = df[(df["Etapa"].str.strip() == "Aguardando Resposta") & (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))]
-        qtd_sem_resposta = len(perda_especifica)
-        base_calculo = total - qtd_sem_resposta
-        perc_avanco = (qtd_avancados / base_calculo * 100) if base_calculo > 0 else 0
+        perda_especifica = df[
+            (df["Etapa"].str.strip() == "Aguardando Resposta") & 
+            (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))
+        ]
+        qtd_sem_resp = len(perda_especifica)
+        base = total - qtd_sem_resp
+        taxa_avanco = (qtd_avanco / base * 100) if base > 0 else 0
         
         fig_funil = px.bar(df_funil, x="Qtd", y="Etapa", orientation="h", text=df_funil["Percentual"].astype(str)+"%", color="Qtd", color_continuous_scale="Blues")
         fig_funil.update_layout(template="plotly_dark", showlegend=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig_funil, use_container_width=True)
         
-        st.markdown(f'<div class="funnel-card"><div class="funnel-label">🚀 Taxa de Avanço Real de Funil</div><div class="funnel-percent">{perc_avanco:.1f}%</div><div class="funnel-sub">Leads Qualificados+ / (Total - Sem Resposta)</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+        <div class="funnel-card">
+            <div class="funnel-label">🚀 Taxa de Avanço Real de Funil</div>
+            <div class="funnel-percent">{taxa_avanco:.1f}%</div>
+            <div class="funnel-sub">Leads Qualificados+ / (Total - Sem Resposta)</div>
+        </div>''', unsafe_allow_html=True)
 
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS")
-    kpi_loss1, kpi_loss2 = st.columns(2)
-    with kpi_loss1: card("Leads Improdutivos", len(perdidos))
-    with kpi_loss2: card("Perda: Aguardando s/ Resp.", len(perda_especifica))
+    k1, k2 = st.columns(2)
+    with k1: card("Total Perdido", len(perdidos))
+    with k2: card("Perda: Aguardando s/ Resp.", len(perda_especifica))
     
-    # Retorna métricas para salvar
+    st.write("")
+    if not perdidos.empty:
+        df_loss = perdidos.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
+        df_loss["Percentual"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
+        df_loss["Label"] = df_loss.apply(lambda x: f"{int(x['Qtd'])}<br>({x['Percentual']}%)", axis=1)
+        
+        fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", text="Label", color="Qtd", color_continuous_scale="Blues")
+        fig_loss.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
+        st.plotly_chart(fig_loss, use_container_width=True)
+
     return {
         "Total": total, "Andamento": len(em_andamento), "Perdidos": len(perdidos),
-        "Taxa": f"{perc_avanco:.1f}%", "TopFonte": top_fonte_name
+        "Taxa": f"{taxa_avanco:.1f}%", "TopFonte": top_fonte
     }
 
 # =========================
@@ -211,10 +276,9 @@ def dashboard(df, marca):
 # =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
-# SIDEBAR PARA SALVAMENTO
-st.sidebar.header("💾 Painel de Carga")
-marca_selecionada = st.sidebar.selectbox("Marca", MARCAS)
-semana_selecionada = st.sidebar.selectbox("Semana de Referência", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
+st.sidebar.header("Painel de Carga")
+marca_sel = st.sidebar.selectbox("Marca", MARCAS)
+semana_sel = st.sidebar.selectbox("Semana Ref.", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
 
 arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
 
@@ -222,52 +286,45 @@ if arquivo:
     try:
         df = load_csv(arquivo)
         df = processar(df)
-
-        resp_val = df["Responsável"].mode()[0] if "Responsável" in df.columns and not df["Responsável"].empty else "Não Identificado"
-        equipe_raw = df["Equipe"].mode()[0] if "Equipe" in df.columns and not df["Equipe"].empty else "Geral"
-        equipe_val = "Expansão Ensina Mais" if equipe_raw in ["Geral", "", "nan", "ExpansÃ£o"] else equipe_raw
-
-        # Perfil Visual
+        
+        # Perfil
+        resp = df["Responsável"].mode()[0] if not df["Responsável"].empty else "N/A"
+        equipe = df["Equipe"].mode()[0] if not df["Equipe"].empty else "Geral"
+        if equipe in ["nan", "ExpansÃ£o", ""]: equipe = "Expansão Ensina Mais"
+        
         st.markdown(f"""
         <div class="profile-header">
-            <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp_val}</span></div>
+            <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp}</span></div>
             <div class="profile-divider"></div>
-            <div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe_val}</span></div>
+            <div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe}</span></div>
         </div>""", unsafe_allow_html=True)
+        
+        if "Data de Criação" in df.columns:
+            d_min = df["Data de Criação"].min().strftime('%d/%m/%Y')
+            d_max = df["Data de Criação"].max().strftime('%d/%m/%Y')
+            st.markdown(f'<div class="date-card"><div class="date-label">📅 Recorte Temporal</div><div class="date-value">{d_min} ➔ {d_max}</div></div>', unsafe_allow_html=True)
 
-        # Exibe Dashboard e captura métricas para salvar
-        metricas = dashboard(df, marca_selecionada)
-
-        # BOTÃO SALVAR
+        metrics = dashboard(df, marca_sel)
+        
         st.sidebar.divider()
-        if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_selecionada}"):
-            with st.spinner("Conectando ao Google Sheets..."):
+        if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_sel}"):
+            with st.spinner("Salvando..."):
                 client = conectar_google()
                 if client:
                     try:
                         sh = client.open("BI_Historico")
-                        ws = sh.worksheet(marca_selecionada)
-                        
-                        # Dados para salvar
-                        linha = [
-                            datetime.now().strftime('%d/%m/%Y'),
-                            datetime.now().strftime('%H:%M:%S'),
-                            semana_selecionada,
-                            resp_val,
-                            equipe_val,
-                            metricas['Total'],
-                            metricas['Andamento'],
-                            metricas['Perdidos'],
-                            metricas['Taxa'],
-                            metricas['TopFonte']
-                        ]
-                        ws.append_row(linha)
-                        st.sidebar.success(f"✅ Sucesso! Dados salvos na aba {marca_selecionada}.")
+                        ws = sh.worksheet(marca_sel)
+                        ws.append_row([
+                            datetime.now().strftime('%d/%m/%Y'), datetime.now().strftime('%H:%M:%S'),
+                            semana_sel, resp, equipe, metrics['Total'], metrics['Andamento'],
+                            metrics['Perdidos'], metrics['Taxa'], metrics['TopFonte']
+                        ])
+                        st.sidebar.success("Salvo com sucesso!")
                         st.balloons()
                     except Exception as e:
-                        st.sidebar.error(f"Erro ao salvar na planilha: {e}")
+                        st.sidebar.error(f"Erro planilha: {e}")
                 else:
-                    st.sidebar.error("Erro de credenciais Google.")
-
+                    st.sidebar.error("Erro de conexão Google.")
+                    
     except Exception as e:
-        st.error(f"Erro crítico no processamento: {e}")
+        st.error(f"Erro no processamento: {e}")
