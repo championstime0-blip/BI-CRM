@@ -82,32 +82,40 @@ if arquivo:
     if df_raw is not None:
         df = identificar_colunas(df_raw)
         
-        # Garante que as colunas existem para não dar erro de Series
+        # Garante que a coluna existe e converte para String (previne erro lower)
         if "Motivo de Perda" not in df.columns:
             df["Motivo de Perda"] = ""
-        if "Etapa" not in df.columns:
-            st.error("Coluna 'Etapa' não encontrada.")
-            st.stop()
+        else:
+            df["Motivo de Perda"] = df["Motivo de Perda"].astype(str).fillna("")
 
-        # Limpeza e Conversão
+        if "Etapa" not in df.columns:
+            st.error("Coluna 'Etapa' não identificada.")
+            st.stop()
+        else:
+            df["Etapa"] = df["Etapa"].astype(str).fillna("")
+
+        # Conversão de Data
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
         df = df.dropna(subset=["Data de Criação"])
-        
-        # CORREÇÃO DO ERRO: Forçar tudo para string antes de aplicar lower()
-        df["Etapa"] = df["Etapa"].astype(str)
-        df["Motivo de Perda"] = df["Motivo de Perda"].astype(str)
 
+        # Lógica de Status Blindada
         def definir_status(row):
-            etapa = row["Etapa"].lower()
-            motivo = row["Motivo de Perda"].lower()
-            if any(x in etapa for x in ["ganho", "venda", "faturado"]): return "Ganho"
-            # Se o motivo não for vazio e não for 'nan'
-            if motivo.strip() != "" and motivo.strip() != "nan": return "Perdido"
+            # Força a conversão para string e lower case de forma segura
+            etapa = str(row["Etapa"]).lower()
+            motivo = str(row["Motivo de Perda"]).lower()
+            
+            if any(x in etapa for x in ["ganho", "venda", "faturado"]): 
+                return "Ganho"
+            
+            # Se o motivo não for vazio e não for o texto 'nan' (nulo do pandas)
+            if motivo.strip() != "" and motivo.strip() != "nan": 
+                return "Perdido"
+            
             return "Em Andamento"
 
         df["Status"] = df.apply(definir_status, axis=1)
 
-        # Dados de Cabeçalho
+        # Identidade do Dashboard
         resp = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
         equipe = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
         min_d = df["Data de Criação"].min().strftime('%d/%m/%Y')
@@ -121,7 +129,7 @@ if arquivo:
         em_andamento = len(df[df["Status"] == "Em Andamento"])
         perdidos = len(df[df["Status"] == "Perdido"])
         
-        # Filtro Sem Resposta
+        # Cálculo de Perda sem Resposta
         mask_sem_resp = (df["Etapa"].str.lower().str.contains("aguardando resposta", na=False)) & \
                         (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))
         qtd_sem_resp = len(df[mask_sem_resp])
