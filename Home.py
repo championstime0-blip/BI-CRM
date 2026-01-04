@@ -29,6 +29,7 @@ st.markdown("""
 }
 .profile-label { color: #94a3b8; font-family: 'Rajdhani', sans-serif; font-size: 13px; text-transform: uppercase; }
 .profile-value { color: #f8fafc; font-size: 24px; font-weight: 600; font-family: 'Rajdhani', sans-serif; }
+.profile-divider { width: 1px; height: 40px; background-color: #334155; margin: 0 20px; }
 .card {
     background: linear-gradient(135deg, #111827, #020617);
     padding: 24px; border-radius: 16px; border: 1px solid #1e293b; text-align: center;
@@ -43,77 +44,61 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================
-# FUNÇÃO DE CORREÇÃO DE TEXTO
-# =========================
-def corrigir_acentuacao(texto):
-    if not isinstance(texto, str): return texto
-    # Corrige os erros comuns de exportação Latin-1 para UTF-8
-    correcoes = {
-        "ExpansÃ£o": "Expansão",
-        "responsÃ¡vel": "responsável",
-        "CriaÃ§Ã£o": "Criação",
-        "Aguardando Resposta": "Aguardando Resposta",
-        "faturado": "Faturado"
-    }
-    for erro, correto in correcoes.items():
-        texto = texto.replace(erro, correto)
-    return texto
-
-# =========================
 # MOTOR DE PROCESSAMENTO
 # =========================
-def load_csv(file):
-    # O RD CRM exporta em ISO-8859-1 (Latin-1)
-    df = pd.read_csv(file, sep=';', encoding='latin-1', on_bad_lines='skip')
-    return df
-
-def processar(df):
-    # 1. Deduplicação e Limpeza de nomes de colunas
+def processar(arquivo_bruto):
+    # Lendo com encoding correto para evitar Ã£ e Ã¡
+    df = pd.read_csv(arquivo_bruto, sep=';', encoding='latin-1', on_bad_lines='skip')
+    
+    # 1. Limpeza de colunas duplicadas e nomes
     df = df.loc[:, ~df.columns.duplicated()].copy()
-    df.columns = [corrigir_acentuacao(str(c)).strip() for c in df.columns]
     
     cols_map = {}
     for c in df.columns:
-        c_low = c.lower()
+        c_low = str(c).lower()
         if "fonte" in c_low: cols_map[c] = "Fonte"
         elif "data de criacao" in c_low or "data de cri" in c_low: cols_map[c] = "Data de Criação"
         elif "responsavel" in c_low and "equipe" not in c_low: cols_map[c] = "Responsável"
         elif "equipe" in c_low: cols_map[c] = "Equipe"
-        elif c_low == "etapa": cols_map[c] = "Etapa"
-        elif "motivo" in c_low: cols_map[c] = "Motivo de Perda"
+        elif "etapa" in c_low: cols_map[c] = "Etapa"
+        elif "motivo de perda" in c_low: cols_map[c] = "Motivo de Perda"
     
     df = df.rename(columns=cols_map)
-    
-    # 2. Corrigir o conteúdo das células
-    for col in df.columns:
-        if df[col].dtype == 'object':
-            df[col] = df[col].apply(corrigir_acentuacao)
+
+    # 2. Forçar limpeza de texto nas colunas principais para remover erros de encoding residuais
+    for col in ["Responsável", "Equipe", "Etapa", "Motivo de Perda"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.encode('latin-1').str.decode('utf-8', errors='ignore').fillna("N/A")
+            # Correção manual para o caso específico da Equipe
+            df[col] = df[col].str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável")
 
     # 3. Lógica de Status
-    df["Status"] = df.apply(lambda row: 
-        "Ganho" if any(x in str(row.get("Etapa", "")).lower() for x in ["faturado", "ganho", "venda"])
-        else "Perdido" if str(row.get("Motivo de Perda", "")).strip().lower() not in ["", "nan", "none", "-", "nada"]
-        else "Em Andamento", axis=1)
-    
+    def definir_status(row):
+        etapa = str(row.get("Etapa", "")).lower()
+        if any(x in etapa for x in ["faturado", "ganho", "venda"]): return "Ganho"
+        motivo = str(row.get("Motivo de Perda", "")).strip().lower()
+        if motivo not in ["", "nan", "none", "-", "nada", "0"]: return "Perdido"
+        return "Em Andamento"
+
+    df["Status"] = df.apply(definir_status, axis=1)
     return df
 
 # =========================
-# APP PRINCIPAL
+# APP INTERFACE
 # =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
-MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
-marca = st.sidebar.selectbox("Selecione a Marca", MARCAS)
+marca = st.sidebar.selectbox("Selecione a Marca", ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"])
 arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
 
 if arquivo:
     try:
-        df = processar(load_csv(arquivo))
+        df = processar(arquivo)
         
-        # --- CARDS DE PERFIL ---
+        # --- HEADER DE PERFIL ---
         resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
         equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
-        
+
         st.markdown(f"""
         <div class="profile-header">
             <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp_v}</span></div>
@@ -124,25 +109,27 @@ if arquivo:
 
         # --- KPIs ---
         total = len(df)
-        em_andamento = len(df[df["Status"] == "Em Andamento"])
-        perdidos = len(df[df["Status"] == "Perdido"])
+        andamento = len(df[df["Status"] == "Em Andamento"])
         
         c1, c2 = st.columns(2)
         with c1: st.markdown(f'<div class="card"><div class="card-title">Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
-        with c2: st.markdown(f'<div class="card"><div class="card-title">Leads em Andamento</div><div class="card-value">{em_andamento}</div></div>', unsafe_allow_html=True)
+        with c2: st.markdown(f'<div class="card"><div class="card-title">Em Andamento</div><div class="card-value">{andamento}</div></div>', unsafe_allow_html=True)
 
         # --- DETALHE DAS PERDAS ---
         st.markdown('<div class="futuristic-sub">🚫 DETALHE DAS PERDAS</div>', unsafe_allow_html=True)
-        
-        df_loss = df[df["Status"] == "Perdido"].groupby("Etapa").size().reset_index(name="Qtd")
-        fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", color="Qtd", color_continuous_scale="Blues", text_auto=True)
-        fig_loss.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_loss, use_container_width=True)
+        perdidos = df[df["Status"] == "Perdido"]
+        if not perdidos.empty:
+            df_loss = perdidos.groupby("Etapa").size().reset_index(name="Qtd")
+            fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", color="Qtd", color_continuous_scale="Blues", text_auto=True)
+            fig_loss.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_loss, use_container_width=True)
+        else:
+            st.info("Nenhuma perda registrada no período.")
 
-        # --- SALVAMENTO ---
+        # --- BOTÃO SALVAR ---
         if st.sidebar.button("🚀 SALVAR HISTÓRICO"):
-            # Lógica do Google Sheets aqui (mantendo a que já configuramos)
-            st.sidebar.success("Dados Salvos!")
+            # Lógica de conexão com Google Sheets deve vir aqui
+            st.sidebar.success("Dados prontos para envio!")
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
