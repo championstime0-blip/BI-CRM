@@ -7,6 +7,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import os
 from datetime import datetime
+import io
 
 # ==========================================
 # 1. CONFIGURAÇÃO DA PÁGINA E CSS
@@ -16,23 +17,19 @@ st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@500;700&display=swap');
-
 .stApp { background-color: #0b0f1a; color: #e0e0e0; }
-
 .futuristic-title {
     font-family: 'Orbitron', sans-serif; font-size: 56px; font-weight: 900; text-transform: uppercase;
     background: linear-gradient(90deg, #22d3ee 0%, #818cf8 50%, #c084fc 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     letter-spacing: 3px; margin-bottom: 10px; text-shadow: 0 0 30px rgba(34, 211, 238, 0.3);
 }
-
 .futuristic-sub {
     font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; text-transform: uppercase;
     color: #e2e8f0; letter-spacing: 2px; border-bottom: 1px solid #1e293b;
     padding-bottom: 8px; margin-top: 30px; margin-bottom: 20px; display: flex; align-items: center;
 }
 .sub-icon { margin-right: 12px; font-size: 24px; color: #22d3ee; text-shadow: 0 0 10px rgba(34, 211, 238, 0.6); }
-
 .profile-header {
     background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
     border-left: 5px solid #6366f1; border-radius: 8px; padding: 20px 30px;
@@ -40,17 +37,14 @@ st.markdown("""
 }
 .profile-label { color: #94a3b8; font-family: 'Rajdhani', sans-serif; font-size: 13px; text-transform: uppercase; }
 .profile-value { color: #f8fafc; font-size: 24px; font-weight: 600; font-family: 'Rajdhani', sans-serif; }
-
 .card {
     background: linear-gradient(135deg, #111827, #020617); padding: 24px; border-radius: 16px;
     border: 1px solid #1e293b; text-align: center; box-shadow: 0 0 15px rgba(56,189,248,0.05);
 }
 .card-title { font-family: 'Rajdhani', sans-serif; font-size: 14px; font-weight: 600; color: #94a3b8; text-transform: uppercase; }
 .card-value { font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700; color: #22d3ee; }
-
 .date-card { background: rgba(15, 23, 42, 0.4); border: 1px solid #334155; border-radius: 12px; padding: 12px; text-align: center; margin-bottom: 30px; }
 .funnel-card { background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%); border-top: 2px solid #22d3ee; padding: 15px; text-align: center; border-radius: 0 0 12px 12px; }
-
 .top-item { border-left: 3px solid #22d3ee; padding: 12px 15px; margin-bottom: 8px; border-radius: 0 8px 8px 0; display: flex; align-items: center; justify-content: space-between; background: rgba(34, 211, 238, 0.05); }
 </style>
 """, unsafe_allow_html=True)
@@ -65,10 +59,9 @@ def kpi_card(title, value):
     st.markdown(f'<div class="card"><div class="card-title">{title}</div><div class="card-value">{value}</div></div>', unsafe_allow_html=True)
 
 def processar_dados(df):
-    df.columns = df.columns.str.strip()
+    df.columns = df.columns.astype(str).str.strip()
     cols_map = {}
     
-    # Mapeamento Inteligente de Colunas (Evita erro de acentuação/case)
     for c in df.columns:
         c_low = c.lower()
         if any(x in c_low for x in ["data de cri", "data da cri", "created date", "data de criacao"]):
@@ -86,13 +79,12 @@ def processar_dados(df):
 
     df = df.rename(columns=cols_map)
     
-    # Fallback se não encontrar a coluna de data
     if "Data de Criação" not in df.columns:
-        st.error("❌ Coluna de Data não encontrada. Verifique o CSV.")
+        st.error("❌ Coluna de 'Data de Criação' não encontrada no arquivo.")
         st.stop()
 
     df["Etapa"] = df["Etapa"].astype(str).str.strip()
-    df["Motivo de Perda"] = df.get("Motivo de Perda", "").astype(str)
+    df["Motivo de Perda"] = df.get("Motivo de Perda", "").astype(str).fillna("")
     df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
     df = df.dropna(subset=["Data de Criação"])
     
@@ -100,7 +92,7 @@ def processar_dados(df):
         etapa = str(row["Etapa"]).lower()
         if any(x in etapa for x in ["faturado", "ganho", "venda"]): return "Ganho"
         motivo = str(row["Motivo de Perda"]).strip().lower()
-        if motivo not in ["", "nan", "none", "-", "0"]: return "Perdido"
+        if motivo not in ["", "nan", "none", "-", "0", "sem motivo"]: return "Perdido"
         return "Em Andamento"
     
     df["Status"] = df.apply(status_lead, axis=1)
@@ -117,18 +109,25 @@ arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
 
 if arquivo:
     try:
-        raw_df = pd.read_csv(arquivo, sep=None, engine='python', encoding='latin-1')
+        # --- DETECÇÃO DE SEPARADOR ---
+        content = arquivo.read().decode('latin-1')
+        arquivo.seek(0)
+        # Verifica se tem mais ponto-e-vírgula ou vírgula na primeira linha
+        first_line = content.split('\n')[0]
+        separator = ';' if first_line.count(';') > first_line.count(',') else ','
+        
+        raw_df = pd.read_csv(arquivo, sep=separator, encoding='latin-1')
         df = processar_dados(raw_df)
 
         # Identificação
-        resp_val = df["Responsável"].mode()[0] if "Responsável" in df.columns else "N/A"
-        equipe_raw = df["Equipe"].mode()[0] if "Equipe" in df.columns else "Geral"
+        resp_val = df["Responsável"].mode()[0] if "Responsável" in df.columns and not df["Responsável"].empty else "N/A"
+        equipe_raw = df["Equipe"].mode()[0] if "Equipe" in df.columns and not df["Equipe"].empty else "Geral"
         equipe_val = "Expansão Ensina Mais" if equipe_raw in ["Geral", "nan", ""] else equipe_raw
         
         min_date = df["Data de Criação"].min().strftime('%d/%m/%Y')
         max_date = df["Data de Criação"].max().strftime('%d/%m/%Y')
 
-        # Layout Superior
+        # Header de Perfil
         st.markdown(f"""
         <div class="profile-header">
             <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp_val}</span></div>
@@ -143,7 +142,10 @@ if arquivo:
         total = len(df)
         em_andamento = df[df["Status"] == "Em Andamento"]
         perdidos = df[df["Status"] == "Perdido"]
-        perda_especifica = df[(df["Etapa"].str.contains("Aguardando Resposta", case=False)) & (df["Motivo de Perda"].str.contains("sem resposta", case=False, na=False))]
+        
+        # Filtro de Perda s/ Resposta corrigido para evitar erro 0
+        perda_especifica = df[(df["Etapa"].astype(str).str.contains("Aguardando Resposta", case=False)) & 
+                              (df["Motivo de Perda"].astype(str).str.contains("sem resposta", case=False))]
         
         c1, c2 = st.columns(2)
         with c1: kpi_card("Leads Totais", total)
@@ -156,6 +158,7 @@ if arquivo:
         with col_mkt:
             subheader_futurista("📡", "MARKETING & FONTES")
             df_fonte = df["Fonte"].value_counts().reset_index()
+            df_fonte.columns = ['Fonte', 'count']
             fig_pie = px.pie(df_fonte, values='count', names='Fonte', hole=0.6, color_discrete_sequence=px.colors.sequential.Blues_r)
             fig_pie.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
