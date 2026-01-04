@@ -12,7 +12,6 @@ from datetime import datetime
 # =========================
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
-# [Mantive seu CSS original aqui para não perder o visual futurista]
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap');
@@ -40,21 +39,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================
-# CONEXÃO GOOGLE (CORRIGIDA)
+# CONEXÃO GOOGLE
 # =========================
 def conectar_google():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    
-    # Tenta pegar das Variáveis de Ambiente do Render primeiro
-    creds_json = os.environ.get("gcp_service_account")
-    
-    # Se não achar (local), tenta pegar do st.secrets
+    creds_json = os.environ.get("gcp_service_account") or st.secrets.get("gcp_service_account")
     if not creds_json:
-        creds_json = st.secrets.get("gcp_service_account")
-        
-    if not creds_json:
-        raise ValueError("Credenciais Google não encontradas no Environment ou Secrets.")
-        
+        st.error("Credenciais não configuradas no Render.")
+        return None
     creds_dict = json.loads(creds_json)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     return gspread.authorize(creds)
@@ -63,30 +55,27 @@ def conectar_google():
 # MOTOR DE PROCESSAMENTO
 # =========================
 def processar(arquivo_bruto):
-    # RD CRM usa Latin-1 e separador ponto e vírgula
+    # RD CRM exporta em latin-1. Lemos e já removemos colunas duplicadas (Vacina contra erro 'str')
     df = pd.read_csv(arquivo_bruto, sep=';', encoding='latin-1', on_bad_lines='skip')
-    
-    # Limpa colunas duplicadas
     df = df.loc[:, ~df.columns.duplicated()].copy()
     
-    # Mapeamento manual e forçado
+    # Mapeamento robusto
     cols_map = {}
     for c in df.columns:
         c_low = str(c).lower()
         if "fonte" in c_low: cols_map[c] = "Fonte"
         elif "data de cri" in c_low: cols_map[c] = "Data de Criação"
-        elif "responsavel" in c_low or "responsÃ¡vel" in c_low: cols_map[c] = "Responsável"
+        elif "responsavel" in c_low and "equipe" not in c_low: cols_map[c] = "Responsável"
         elif "equipe" in c_low: cols_map[c] = "Equipe"
         elif "etapa" in c_low: cols_map[c] = "Etapa"
         elif "motivo de perda" in c_low: cols_map[c] = "Motivo de Perda"
     
     df = df.rename(columns=cols_map)
 
-    # Garante que colunas existem para não quebrar o dashboard
+    # Limpeza de strings e correção de Ã£/Ã¡
     for col in ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]:
-        if col not in df.columns:
-            df[col] = "N/A"
-        else:
+        if col in df.columns:
+            # Forçamos converter para string e limpamos acentuação quebrada
             df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
 
     def definir_status(row):
@@ -100,7 +89,7 @@ def processar(arquivo_bruto):
     return df
 
 # =========================
-# APP PRINCIPAL
+# APP INTERFACE
 # =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
@@ -114,9 +103,9 @@ if arquivo:
     try:
         df = processar(arquivo)
         
-        # --- EXIBIÇÃO IMEDIATA ---
-        resp_v = df["Responsável"].iloc[0] if not df.empty else "N/A"
-        equipe_v = df["Equipe"].iloc[0] if not df.empty else "Geral"
+        # --- CARDS DE PERFIL ---
+        resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
+        equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Expansão Ensina Mais"
 
         st.markdown(f"""
         <div class="profile-header">
@@ -128,8 +117,7 @@ if arquivo:
 
         total = len(df)
         andamento = len(df[df["Status"] == "Em Andamento"])
-        perdidos = len(df[df["Status"] == "Perdido"])
-
+        
         c1, c2 = st.columns(2)
         with c1: st.markdown(f'<div class="card"><div class="card-title">Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
         with c2: st.markdown(f'<div class="card"><div class="card-title">Andamento</div><div class="card-value">{andamento}</div></div>', unsafe_allow_html=True)
@@ -137,24 +125,27 @@ if arquivo:
         # Gráfico de Perdas
         st.divider()
         st.markdown("### 🚫 DETALHE DAS PERDAS")
-        df_p = df[df["Status"] == "Perdido"]
-        if not df_p.empty:
-            fig = px.bar(df_p.groupby("Etapa").size().reset_index(name="Qtd"), x="Etapa", y="Qtd", color="Qtd", color_continuous_scale="Purples", text_auto=True)
-            fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
+        perdidos = df[df["Status"] == "Perdido"]
+        if not perdidos.empty:
+            df_loss = perdidos.groupby("Etapa").size().reset_index(name="Qtd")
+            fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", color="Qtd", color_continuous_scale="Purples", text_auto=True)
+            fig_loss.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_loss, use_container_width=True)
 
-        # --- SALVAMENTO ---
+        # Botão Salvar
+        st.sidebar.markdown("---")
         if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_ref}"):
-            with st.spinner("Salvando..."):
+            with st.spinner("Conectando ao histórico..."):
                 client = conectar_google()
-                sh = client.open("BI_Historico")
-                try: ws = sh.worksheet(marca)
-                except: ws = sh.add_worksheet(title=marca, rows="1000", cols="20")
-                
-                taxa = f"{(andamento/total*100):.1f}%" if total > 0 else "0%"
-                ws.append_row([datetime.now().strftime('%d/%m/%Y'), datetime.now().strftime('%H:%M:%S'), semana_ref, resp_v, equipe_v, total, andamento, perdidos, taxa])
-                st.sidebar.success("✅ Salvo!")
-                st.balloons()
+                if client:
+                    sh = client.open("BI_Historico")
+                    try: ws = sh.worksheet(marca)
+                    except: ws = sh.add_worksheet(title=marca, rows="1000", cols="20")
+                    
+                    taxa = f"{(andamento/total*100):.1f}%" if total > 0 else "0%"
+                    ws.append_row([datetime.now().strftime('%d/%m/%Y'), datetime.now().strftime('%H:%M:%S'), semana_ref, resp_v, equipe_v, total, andamento, (total-andamento), taxa])
+                    st.sidebar.success(f"✅ {semana_ref} salva!")
+                    st.balloons()
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
