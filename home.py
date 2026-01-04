@@ -13,7 +13,7 @@ from datetime import datetime
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS (MANTIDA)
+# ESTILIZAÇÃO CSS (MANTIDA INTACTA)
 # =========================
 st.markdown("""
 <style>
@@ -87,12 +87,23 @@ MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
 def conectar_google():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        # Tenta pegar de var de ambiente ou secrets, se falhar retorna None
         creds_json = os.environ.get("gcp_service_account") or st.secrets.get("gcp_service_account")
-        if not creds_json: return None
-        creds_dict = json.loads(creds_json)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        return gspread.authorize(creds)
+        
+        # Se você usa arquivo local json, descomente a linha abaixo e comente as de cima:
+        # creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        
+        if creds_json:
+            creds_dict = json.loads(creds_json)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            return gspread.authorize(creds)
+        else:
+             # Fallback para arquivo local se configurado
+             creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+             return gspread.authorize(creds)
+             
     except Exception as e:
+        st.error(f"Erro credenciais: {e}")
         return None
 
 # =========================
@@ -108,27 +119,21 @@ def subheader_futurista(icon, text):
 # MOTOR DE PROCESSAMENTO
 # =========================
 def load_csv(file):
-    # Encoding Latin-1
     raw = file.read().decode("latin-1", errors="ignore")
     sep = ";" if raw.count(";") > raw.count(",") else ","
     file.seek(0)
     return pd.read_csv(file, sep=sep, engine="python", on_bad_lines="skip")
 
 def processar(df):
-    # 1. Limpeza de espaços
     df.columns = df.columns.str.strip()
-    
-    # 2. Remoção imediata de colunas com mesmo nome
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # 3. Mapeamento
     cols_map = {}
     for c in df.columns:
         c_lower = str(c).lower()
         if "fonte" in c_lower and "utm" not in c_lower: cols_map[c] = "Fonte"
         elif "data de cri" in c_lower: cols_map[c] = "Data de Criação"
         elif "respons" in c_lower and "equipe" not in c_lower: cols_map[c] = "Responsável"
-        # Caça "Equipes do responsável" ou "Equipe"
         elif "equipes do respons" in c_lower or "equipe" in c_lower: cols_map[c] = "Equipe"
         elif c_lower == "motivo de perda": cols_map[c] = "Motivo de Perda"
         elif c_lower == "etapa": cols_map[c] = "Etapa"
@@ -136,15 +141,11 @@ def processar(df):
     df = df.rename(columns=cols_map)
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # 4. Tratamento de Dados e Encoding
     colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
     
     for col in colunas_texto:
         if col in df.columns:
-            if isinstance(df[col], pd.DataFrame):
-                df[col] = df[col].iloc[:, 0]
-            
-            # Limpeza de caracteres especiais
+            if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
             df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
         else:
             df[col] = "N/A"
@@ -280,7 +281,6 @@ if arquivo:
         df = processar(df)
         
         # --- LÓGICA INTELIGENTE PARA EQUIPE ---
-        # 1. Tenta pegar a moda (valor mais comum) da coluna
         resp = df["Responsável"].mode()[0] if not df["Responsável"].empty else "N/A"
         
         if "Equipe" in df.columns and not df["Equipe"].empty:
@@ -288,18 +288,12 @@ if arquivo:
         else:
              equipe_raw = "N/A"
 
-        # 2. Verifica qual marca está no texto, independentemente do "Expansão"
-        if "Prepara" in equipe_raw:
-             equipe = "Expansão Prepara"
-        elif "Microlins" in equipe_raw:
-             equipe = "Expansão Microlins"
-        elif "Ensina" in equipe_raw:
-             equipe = "Expansão Ensina Mais"
+        if "Prepara" in equipe_raw: equipe = "Expansão Prepara"
+        elif "Microlins" in equipe_raw: equipe = "Expansão Microlins"
+        elif "Ensina" in equipe_raw: equipe = "Expansão Ensina Mais"
         elif any(x in equipe_raw for x in ["Geral", "nan", "N/A", ""]): 
-             # Se for vazio, usa a marca selecionada no menu lateral como fallback
              equipe = f"Expansão {marca_sel}"
         else:
-             # Se for outro nome válido, mantém (ex: Comercial)
              equipe = equipe_raw
 
         # --- EXIBIÇÃO ---
@@ -315,25 +309,59 @@ if arquivo:
             d_max = df["Data de Criação"].max().strftime('%d/%m/%Y')
             st.markdown(f'<div class="date-card"><div class="date-label">📅 Recorte Temporal</div><div class="date-value">{d_min} ➔ {d_max}</div></div>', unsafe_allow_html=True)
 
+        # Chama Dashboard
         metrics = dashboard(df, marca_sel)
         
         st.sidebar.divider()
-        if st.sidebar.button(f"🚀 SALVAR DADOS: {semana_sel}"):
-            with st.spinner("Salvando..."):
+        # ==========================================================
+        # MODIFICAÇÃO PRINCIPAL: SALVAR SNAPSHOT COMPLETO
+        # ==========================================================
+        if st.sidebar.button(f"🚀 SALVAR HISTÓRICO: {semana_sel}"):
+            with st.spinner("Gerando Snapshot no Banco de Dados..."):
                 client = conectar_google()
                 if client:
                     try:
-                        sh = client.open("BI_Historico")
-                        ws = sh.worksheet(marca_sel)
-                        ws.append_row([
-                            datetime.now().strftime('%d/%m/%Y'), datetime.now().strftime('%H:%M:%S'),
-                            semana_sel, resp, equipe, metrics['Total'], metrics['Andamento'],
-                            metrics['Perdidos'], metrics['Taxa'], metrics['TopFonte']
-                        ])
-                        st.sidebar.success("Salvo com sucesso!")
+                        # 1. Abre/Cria planilha e aba
+                        try:
+                            sh = client.open("BI_Historico") # Use o nome da sua planilha existente
+                        except:
+                            st.sidebar.error("Planilha 'BI_Historico' não encontrada.")
+                            st.stop()
+                            
+                        # Vamos salvar numa aba de banco de dados 'db_snapshots'
+                        try:
+                            ws = sh.worksheet("db_snapshots")
+                        except:
+                            ws = sh.add_worksheet(title="db_snapshots", rows="1000", cols="20")
+                            
+                        # 2. Prepara os dados para salvar (Cópia para não travar a tela)
+                        df_save = df.copy()
+                        
+                        # Adiciona metadados para encontrar depois
+                        agora = datetime.now()
+                        id_snap = agora.strftime("%Y%m%d_%H%M%S") # ID único
+                        
+                        df_save['snapshot_id'] = id_snap
+                        df_save['data_salvamento'] = agora.strftime('%d/%m/%Y %H:%M')
+                        df_save['semana_ref'] = semana_sel
+                        df_save['marca_ref'] = marca_sel
+                        
+                        # Converte tudo para string para o GSheets não reclamar de datas
+                        df_save = df_save.astype(str)
+                        
+                        # 3. Salva
+                        dados_existentes = ws.get_all_values()
+                        if len(dados_existentes) == 0:
+                            # Se vazio, cabeçalho + dados
+                            ws.update([df_save.columns.values.tolist()] + df_save.values.tolist())
+                        else:
+                            # Se existe, apenas dados (append)
+                            ws.append_rows(df_save.values.tolist())
+                            
+                        st.sidebar.success(f"Snapshot salvo! ID: {id_snap}")
                         st.balloons()
                     except Exception as e:
-                        st.sidebar.error(f"Erro planilha: {e}")
+                        st.sidebar.error(f"Erro ao salvar: {e}")
                 else:
                     st.sidebar.error("Erro de conexão Google.")
                     
