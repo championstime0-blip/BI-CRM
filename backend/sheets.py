@@ -2,18 +2,45 @@ import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
+# ===============================
+# GOOGLE SHEETS CONNECTOR
+# ===============================
+def connect_sheet(credentials_dict, spreadsheet_id, aba):
+    """
+    Conecta a uma aba específica do Google Sheets
+    usando ID da planilha (recomendado para produção).
+    """
 
-def connect_sheet(credentials_dict, sheet_name, aba):
-    creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    creds = Credentials.from_service_account_info(
+        credentials_dict,
+        scopes=scopes
+    )
+
     client = gspread.authorize(creds)
-    sheet = client.open(sheet_name).worksheet(aba)
-    data = sheet.get_all_records()
-    return pd.DataFrame(data), sheet
 
+    try:
+        spreadsheet = client.open_by_key(spreadsheet_id)
+    except Exception as e:
+        raise RuntimeError(
+            f"Planilha não encontrada. Verifique:\n"
+            f"- ID correto\n"
+            f"- Permissão da Service Account\n\n"
+            f"Erro original: {e}"
+        )
 
-def append_row(sheet, data_dict):
-    sheet.append_row(list(data_dict.values()), value_input_option="USER_ENTERED")
+    try:
+        worksheet = spreadsheet.worksheet(aba)
+    except Exception:
+        raise RuntimeError(
+            f"Aba '{aba}' não encontrada na planilha."
+        )
+
+    data = worksheet.get_all_records()
+    df = pd.DataFrame(data)
+
+    return df, worksheet
