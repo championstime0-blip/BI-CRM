@@ -1,37 +1,38 @@
 import streamlit as st
-from backend.loader import load_csv
+from backend.sheets import connect_sheet
 from backend.processor import processar
 from backend.kpis import calcular_kpis
+from backend.historico import salvar_snapshot
 from frontend.styles import load_css
-from frontend.components import profile_header, date_card
 from frontend.dashboard import dashboard
-
-ETAPAS_FUNIL = [
-    "Sem contato","Aguardando Resposta","Confirmou Interesse",
-    "Qualificado","Reunião Agendada","Reunião Realizada",
-    "Follow-up","negociação","em aprovação","faturado"
-]
 
 st.set_page_config(layout="wide")
 load_css()
 
-st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
+st.title("📊 BI CRM – Expansão")
 
-file = st.file_uploader("Upload CSV RD Station", type="csv")
+modo = st.sidebar.radio("Modo de Visualização", ["Diretor", "Operação"])
 
-if file:
-    df = processar(load_csv(file))
-    kpis = calcular_kpis(df)
+@st.cache_data(ttl=600)
+def carregar_base(creds):
+    df, _ = connect_sheet(creds, "CRM_EXPANSAO", "BASE")
+    return df
 
-    resp = df["Responsável"].mode()[0] if "Responsável" in df.columns else "Não Identificado"
-    equipe = df["Equipe"].mode()[0] if "Equipe" in df.columns else "Geral"
+@st.cache_data(ttl=600)
+def carregar_historico(creds):
+    _, sheet = connect_sheet(creds, "CRM_EXPANSAO", "HISTORICO")
+    return sheet
 
-    profile_header(resp, equipe)
+credentials = st.secrets["google_service_account"]
 
-    if "Data de Criação" in df.columns:
-        date_card(
-            df["Data de Criação"].min().strftime("%d/%m/%Y"),
-            df["Data de Criação"].max().strftime("%d/%m/%Y")
-        )
+df = carregar_base(credentials)
+df = processar(df)
 
-    dashboard(df, kpis, ETAPAS_FUNIL)
+kpis = calcular_kpis(df)
+
+dashboard(kpis, modo)
+
+if st.sidebar.button("📌 Salvar KPI Histórico"):
+    _, sheet_hist = connect_sheet(credentials, "CRM_EXPANSAO", "HISTORICO")
+    salvar_snapshot(sheet_hist, "Ensina Mais", kpis)
+    st.success("Snapshot salvo com sucesso")
