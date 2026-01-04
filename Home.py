@@ -42,9 +42,10 @@ st.markdown("""
 # ==========================================
 # 2. MOTOR DE PROCESSAMENTO
 # ==========================================
-def identificar_colunas(df):
-    # Remove colunas duplicadas mantendo apenas a primeira ocorrência
-    df = df.loc[:, ~df.columns.duplicated()]
+def identificar_e_limpar_colunas(df):
+    # REMOVE COLUNAS DUPLICADAS (Causa do erro AttributeError)
+    # Se houver duas colunas "Motivo de Perda", ele mantém apenas a primeira.
+    df = df.loc[:, ~df.columns.duplicated()].copy()
     
     cols_originais = df.columns.tolist()
     mapeamento = {}
@@ -56,10 +57,12 @@ def identificar_colunas(df):
         elif any(x in c_norm for x in ["equipe", "team"]): mapeamento[c] = "Equipe"
         elif c_norm == "etapa": mapeamento[c] = "Etapa"
         elif "motivo" in c_norm: mapeamento[c] = "Motivo de Perda"
+    
     return df.rename(columns=mapeamento)
 
 def carregar_csv(arquivo):
     try:
+        # Tenta ponto e vírgula primeiro
         df = pd.read_csv(arquivo, sep=';', encoding='latin-1')
         if len(df.columns) <= 1:
             arquivo.seek(0)
@@ -82,30 +85,32 @@ if arquivo:
     df_raw = carregar_csv(arquivo)
     
     if df_raw is not None:
-        df = identificar_colunas(df_raw)
+        # Limpa duplicatas e mapeia
+        df = identificar_e_limpar_colunas(df_raw)
         
-        # Blindagem contra duplicatas e nulos
-        for col in ["Etapa", "Motivo de Perda"]:
-            if col not in df.columns:
-                df[col] = ""
-            # Garante que seja Series e Texto
-            df[col] = df[col].astype(str).replace('nan', '')
+        # Garante colunas básicas
+        if "Motivo de Perda" not in df.columns: df["Motivo de Perda"] = ""
+        if "Etapa" not in df.columns: df["Etapa"] = ""
 
-        # Conversão de Data
+        # Conversão de Dados Segura
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
         df = df.dropna(subset=["Data de Criação"])
+        
+        # Garante que sejam Series de Texto Únicas
+        df["Etapa"] = df["Etapa"].astype(str).fillna("")
+        df["Motivo de Perda"] = df["Motivo de Perda"].astype(str).fillna("")
 
-        # Status Logic
+        # Lógica de Status
         def definir_status(row):
-            etapa = str(row["Etapa"]).lower()
-            motivo = str(row["Motivo de Perda"]).lower()
-            if any(x in etapa for x in ["ganho", "venda", "faturado"]): return "Ganho"
-            if motivo.strip() != "": return "Perdido"
+            et = str(row["Etapa"]).lower()
+            mt = str(row["Motivo de Perda"]).lower()
+            if any(x in et for x in ["ganho", "venda", "faturado"]): return "Ganho"
+            if mt.strip() != "" and mt.strip() != "nan": return "Perdido"
             return "Em Andamento"
 
         df["Status"] = df.apply(definir_status, axis=1)
 
-        # Identidade
+        # KPIs e Identidade
         resp = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
         equipe = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
         min_d = df["Data de Criação"].min().strftime('%d/%m/%Y')
@@ -113,17 +118,17 @@ if arquivo:
 
         st.markdown(f'<div class="profile-header"><span><b>Responsável:</b> {resp}</span><span><b>Equipe:</b> {equipe}</span></div>', unsafe_allow_html=True)
 
-        # KPIs
+        # CÁLCULO TAXA AVANÇO (Aqui o erro ocorria)
+        # Forçamos a seleção de uma única coluna como Series
+        col_etapa = df["Etapa"].astype(str).str.lower()
+        col_motivo = df["Motivo de Perda"].astype(str).str.lower()
+        
+        mask_sem_resp = (col_etapa.str.contains("aguardando resposta", na=False)) & \
+                        (col_motivo.str.contains("sem resposta", na=False))
+        
         total = len(df)
-        em_andamento = len(df[df["Status"] == "Em Andamento"])
-        
-        # CORREÇÃO CRÍTICA AQUI: Usando Series de forma explícita
-        s_etapa = df["Etapa"].astype(str).str.lower()
-        s_motivo = df["Motivo de Perda"].astype(str).str.lower()
-        
-        mask_sem_resp = (s_etapa.str.contains("aguardando resposta", na=False)) & \
-                        (s_motivo.str.contains("sem resposta", na=False))
         qtd_sem_resp = len(df[mask_sem_resp])
+        em_andamento = len(df[df["Status"] == "Em Andamento"])
 
         c1, c2 = st.columns(2)
         with c1: st.markdown(f'<div class="card"><div>Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
@@ -136,28 +141,29 @@ if arquivo:
             st.markdown('##### 📡 Marketing & Fontes')
             df_f = df["Fonte"].value_counts().reset_index()
             df_f.columns = ['Fonte', 'Qtd']
-            fig_p = px.pie(df_f, values='Qtd', names='Fonte', hole=0.5)
+            fig_p = px.pie(df_f, values='Qtd', names='Fonte', hole=0.5, color_discrete_sequence=px.colors.sequential.Blues_r)
             fig_p.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_p, use_container_width=True)
 
         with col_b:
-            st.markdown('##### 📉 Funil')
+            st.markdown('##### 📉 Funil de Vendas')
             ordem = ["Sem contato", "Aguardando Resposta", "Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
             df_funil = df.groupby("Etapa").size().reindex(ordem).fillna(0).reset_index(name="Qtd")
-            fig_f = px.bar(df_funil, x="Qtd", y="Etapa", orientation='h')
+            fig_f = px.bar(df_funil, x="Qtd", y="Etapa", orientation='h', color="Qtd", color_continuous_scale="Blues")
             fig_f.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_f, use_container_width=True)
 
         # Botão Salvar
         st.divider()
-        if st.button("🚀 SALVAR NO GOOGLE SHEETS"):
+        if st.button("🚀 SALVAR DADOS NO GOOGLE SHEETS"):
             try:
                 etapas_ok = ["qualificado", "reunião agendada", "reunião realizada", "follow-up", "negociação", "em aprovação", "faturado"]
                 qtd_ok = len(df[df["Etapa"].str.lower().isin(etapas_ok)])
                 base = total - qtd_sem_resp
                 taxa = (qtd_ok / base * 100) if base > 0 else 0
                 
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.environ.get("CREDENCIAIS_GOOGLE")), ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+                creds_json = os.environ.get("CREDENCIAIS_GOOGLE")
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
                 client = gspread.authorize(creds)
                 sh = client.open("BI_Historico")
                 
@@ -167,7 +173,12 @@ if arquivo:
                     ws.append_row(["Data", "Hora", "Semana", "Recorte", "Responsavel", "Equipe", "Total", "Andamento", "Perdidos", "Sem Resposta", "Taxa", "Top Fonte"])
 
                 agora = datetime.now()
-                ws.append_row([agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), agora.strftime('%Y-W%W'), f"{min_d} a {max_d}", str(resp), str(equipe), int(total), int(em_andamento), int(total-em_andamento), int(qtd_sem_resp), f"{taxa:.1f}%", str(df_f.iloc[0]['Fonte'])])
-                st.success("✅ Salvo!")
+                ws.append_row([
+                    agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), agora.strftime('%Y-W%W'),
+                    f"{min_d} a {max_d}", str(resp), str(equipe), int(total), int(em_andamento), 
+                    int(total-em_andamento), int(qtd_sem_resp), f"{taxa:.1f}%", str(df_f.iloc[0]['Fonte'] if not df_f.empty else "N/A")
+                ])
+                st.success("✅ Salvo com sucesso!")
+                st.balloons()
             except Exception as e:
-                st.error(f"Erro: {e}")
+                st.error(f"Erro ao salvar: {e}")
