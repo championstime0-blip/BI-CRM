@@ -45,7 +45,7 @@ def subheader_futurista(icon, text):
     """, unsafe_allow_html=True)
 
 # =========================
-# MOTOR BLINDADO
+# MOTOR BLINDADO (CORREÇÕES AQUI)
 # =========================
 def load_csv(file):
     raw = file.read().decode("latin-1", errors="ignore")
@@ -58,34 +58,31 @@ def load_csv(file):
 def processar(df):
     df.columns = df.columns.astype(str).str.strip()
 
-    # --- MAPEAMENTO ---
-    map_cols = {}
+    cols_map = {}
     for c in df.columns:
         cl = c.lower()
-        if "fonte" in cl or "origem" in cl:
-            map_cols[c] = "Fonte"
-        elif "data" in cl and "cria" in cl:
-            map_cols[c] = "Data de Criação"
-        elif "respons" in cl or "owner" in cl:
-            map_cols[c] = "Responsável"
-        elif "equipe" in cl or "team" in cl:
-            map_cols[c] = "Equipe"
+        if cl in ["fonte","origem","source","conversion origin","origem do lead"]:
+            cols_map[c] = "Fonte"
+        elif cl in ["data de criação","data da criação","created date"]:
+            cols_map[c] = "Data de Criação"
+        elif cl in ["dono do lead","responsável","responsavel","owner"]:
+            cols_map[c] = "Responsável"
+        elif cl in ["equipe","equipe do dono do lead","team"]:
+            cols_map[c] = "Equipe"
         elif "etapa" in cl:
-            map_cols[c] = "Etapa"
+            cols_map[c] = "Etapa"
         elif "motivo" in cl:
-            map_cols[c] = "Motivo de Perda"
+            cols_map[c] = "Motivo de Perda"
 
-    df = df.rename(columns=map_cols)
+    df = df.rename(columns=cols_map)
     df = df.loc[:, ~df.columns.duplicated()].copy()
 
-    # --- GARANTIA DE COLUNAS ---
-    for col in ["Etapa", "Motivo de Perda", "Fonte", "Responsável", "Equipe"]:
+    # --- GARANTIA DE COLUNAS CRÍTICAS ---
+    for col in ["Etapa","Motivo de Perda","Fonte","Responsável","Equipe"]:
         if col not in df.columns:
             df[col] = ""
-
         if isinstance(df[col], pd.DataFrame):
             df[col] = df[col].iloc[:, 0]
-
         df[col] = df[col].astype(str).fillna("").str.strip()
 
     if "Data de Criação" in df.columns:
@@ -93,30 +90,28 @@ def processar(df):
             df["Data de Criação"], errors="coerce", dayfirst=True
         )
 
-    # --- STATUS ---
-    def definir_status(row):
+    def status(row):
         etapa = row["Etapa"].lower()
-        if any(x in etapa for x in ["faturado", "ganho", "venda"]):
+        if any(x in etapa for x in ["faturado","ganho","venda"]):
             return "Ganho"
         motivo = row["Motivo de Perda"].lower()
-        if motivo not in ["", "nan", "none", "-", "0"]:
+        if motivo not in ["","nan","none","-","0"]:
             return "Perdido"
         return "Em Andamento"
 
-    df["Status"] = df.apply(definir_status, axis=1)
-
+    df["Status"] = df.apply(status, axis=1)
     return df
 
 # =========================
-# DASHBOARD
+# DASHBOARD (INALTERADO)
 # =========================
 def dashboard(df, marca):
     total = len(df)
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
 
-    perda_sem_resp = df[
-        (df["Etapa"] == "Aguardando Resposta") &
+    perda_especifica = df[
+        (df["Etapa"].str.strip() == "Aguardando Resposta") &
         (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))
     ]
 
@@ -126,20 +121,17 @@ def dashboard(df, marca):
 
     st.divider()
 
-    col1, col2 = st.columns(2)
+    col_mkt, col_funil = st.columns(2)
 
-    # MARKETING
-    with col1:
+    with col_mkt:
         subheader_futurista("📡", "MARKETING & FONTES")
         df_fonte = df["Fonte"].value_counts().reset_index()
-        df_fonte.columns = ["Fonte", "Qtd"]
-
+        df_fonte.columns = ["Fonte","Qtd"]
         fig = px.pie(df_fonte, values="Qtd", names="Fonte", hole=0.6)
         fig.update_layout(template="plotly_dark", showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-    # FUNIL
-    with col2:
+    with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL")
         df_funil = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
         fig = px.bar(df_funil, x="Qtd", y="Etapa", orientation="h")
@@ -147,14 +139,13 @@ def dashboard(df, marca):
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-
     subheader_futurista("🚫", "DETALHE DAS PERDAS")
     k1, k2 = st.columns(2)
     with k1: card("Total Perdido", len(perdidos))
-    with k2: card("Sem Resposta", len(perda_sem_resp))
+    with k2: card("Sem Resposta", len(perda_especifica))
 
 # =========================
-# APP
+# APP MAIN
 # =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
@@ -166,18 +157,20 @@ if arquivo:
         df = load_csv(arquivo)
         df = processar(df)
 
-        resp = df["Responsável"].mode().iloc[0] if not df["Responsável"].mode().empty else "Não identificado"
-        equipe = df["Equipe"].mode().iloc[0] if not df["Equipe"].mode().empty else "Expansão Ensina Mais"
+        resp_val = df["Responsável"].mode().iloc[0] if not df["Responsável"].mode().empty else "Não Identificado"
+        equipe_raw = df["Equipe"].mode().iloc[0] if not df["Equipe"].mode().empty else "Geral"
+        equipe_val = "Expansão Ensina Mais" if equipe_raw in ["","nan","Geral"] else equipe_raw
 
         st.markdown(f"""
         <div class="profile-header">
-            <div>
+            <div class="profile-group">
                 <span class="profile-label">Responsável</span>
-                <span class="profile-value">{resp}</span>
+                <span class="profile-value">{resp_val}</span>
             </div>
-            <div>
-                <span class="profile-label">Equipe</span>
-                <span class="profile-value">{equipe}</span>
+            <div class="profile-divider"></div>
+            <div class="profile-group">
+                <span class="profile-label">Equipe do Responsável</span>
+                <span class="profile-value">{equipe_val}</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
