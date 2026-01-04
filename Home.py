@@ -36,7 +36,6 @@ st.markdown("""
     border: 1px solid #1e293b; text-align: center; height: 100%;
 }
 .card-value { font-family: 'Orbitron', sans-serif; font-size: 32px; font-weight: 700; color: #22d3ee; }
-.top-item { border-left: 3px solid #22d3ee; padding: 10px; margin-bottom: 5px; background: rgba(34, 211, 238, 0.05); display: flex; justify-content: space-between; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -44,6 +43,9 @@ st.markdown("""
 # 2. MOTOR DE PROCESSAMENTO
 # ==========================================
 def identificar_colunas(df):
+    # Remove colunas duplicadas mantendo apenas a primeira ocorrência
+    df = df.loc[:, ~df.columns.duplicated()]
+    
     cols_originais = df.columns.tolist()
     mapeamento = {}
     for c in cols_originais:
@@ -64,7 +66,7 @@ def carregar_csv(arquivo):
             df = pd.read_csv(arquivo, sep=',', encoding='latin-1')
         return df
     except Exception as e:
-        st.error(f"Erro na leitura do arquivo: {e}")
+        st.error(f"Erro na leitura: {e}")
         return None
 
 # ==========================================
@@ -82,61 +84,50 @@ if arquivo:
     if df_raw is not None:
         df = identificar_colunas(df_raw)
         
-        # Garante que a coluna existe e converte para String (previne erro lower)
-        if "Motivo de Perda" not in df.columns:
-            df["Motivo de Perda"] = ""
-        else:
-            df["Motivo de Perda"] = df["Motivo de Perda"].astype(str).fillna("")
-
-        if "Etapa" not in df.columns:
-            st.error("Coluna 'Etapa' não identificada.")
-            st.stop()
-        else:
-            df["Etapa"] = df["Etapa"].astype(str).fillna("")
+        # Blindagem contra duplicatas e nulos
+        for col in ["Etapa", "Motivo de Perda"]:
+            if col not in df.columns:
+                df[col] = ""
+            # Garante que seja Series e Texto
+            df[col] = df[col].astype(str).replace('nan', '')
 
         # Conversão de Data
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
         df = df.dropna(subset=["Data de Criação"])
 
-        # Lógica de Status Blindada
+        # Status Logic
         def definir_status(row):
-            # Força a conversão para string e lower case de forma segura
             etapa = str(row["Etapa"]).lower()
             motivo = str(row["Motivo de Perda"]).lower()
-            
-            if any(x in etapa for x in ["ganho", "venda", "faturado"]): 
-                return "Ganho"
-            
-            # Se o motivo não for vazio e não for o texto 'nan' (nulo do pandas)
-            if motivo.strip() != "" and motivo.strip() != "nan": 
-                return "Perdido"
-            
+            if any(x in etapa for x in ["ganho", "venda", "faturado"]): return "Ganho"
+            if motivo.strip() != "": return "Perdido"
             return "Em Andamento"
 
         df["Status"] = df.apply(definir_status, axis=1)
 
-        # Identidade do Dashboard
+        # Identidade
         resp = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
         equipe = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
         min_d = df["Data de Criação"].min().strftime('%d/%m/%Y')
         max_d = df["Data de Criação"].max().strftime('%d/%m/%Y')
 
         st.markdown(f'<div class="profile-header"><span><b>Responsável:</b> {resp}</span><span><b>Equipe:</b> {equipe}</span></div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="text-align:center; color:#94a3b8; margin-bottom:20px;">📅 {min_d} até {max_d}</div>', unsafe_allow_html=True)
 
         # KPIs
         total = len(df)
         em_andamento = len(df[df["Status"] == "Em Andamento"])
-        perdidos = len(df[df["Status"] == "Perdido"])
         
-        # Cálculo de Perda sem Resposta
-        mask_sem_resp = (df["Etapa"].str.lower().str.contains("aguardando resposta", na=False)) & \
-                        (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))
+        # CORREÇÃO CRÍTICA AQUI: Usando Series de forma explícita
+        s_etapa = df["Etapa"].astype(str).str.lower()
+        s_motivo = df["Motivo de Perda"].astype(str).str.lower()
+        
+        mask_sem_resp = (s_etapa.str.contains("aguardando resposta", na=False)) & \
+                        (s_motivo.str.contains("sem resposta", na=False))
         qtd_sem_resp = len(df[mask_sem_resp])
 
         c1, c2 = st.columns(2)
-        with c1: st.markdown(f'<div class="card"><div style="color:#94a3b8">Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
-        with c2: st.markdown(f'<div class="card"><div style="color:#94a3b8">Em Andamento</div><div class="card-value">{em_andamento}</div></div>', unsafe_allow_html=True)
+        with c1: st.markdown(f'<div class="card"><div>Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
+        with c2: st.markdown(f'<div class="card"><div>Em Andamento</div><div class="card-value">{em_andamento}</div></div>', unsafe_allow_html=True)
 
         # Gráficos
         st.divider()
@@ -145,46 +136,38 @@ if arquivo:
             st.markdown('##### 📡 Marketing & Fontes')
             df_f = df["Fonte"].value_counts().reset_index()
             df_f.columns = ['Fonte', 'Qtd']
-            fig_p = px.pie(df_f, values='Qtd', names='Fonte', hole=0.5, color_discrete_sequence=px.colors.sequential.Blues_r)
+            fig_p = px.pie(df_f, values='Qtd', names='Fonte', hole=0.5)
             fig_p.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_p, use_container_width=True)
 
         with col_b:
-            st.markdown('##### 📉 Funil de Vendas')
+            st.markdown('##### 📉 Funil')
             ordem = ["Sem contato", "Aguardando Resposta", "Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
             df_funil = df.groupby("Etapa").size().reindex(ordem).fillna(0).reset_index(name="Qtd")
-            fig_f = px.bar(df_funil, x="Qtd", y="Etapa", orientation='h', color="Qtd", color_continuous_scale="Blues")
+            fig_f = px.bar(df_funil, x="Qtd", y="Etapa", orientation='h')
             fig_f.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_f, use_container_width=True)
 
         # Botão Salvar
         st.divider()
-        if st.button("🚀 SALVAR NA PLANILHA BI_HISTORICO"):
-            with st.spinner("Salvando..."):
-                try:
-                    etapas_ok = ["qualificado", "reunião agendada", "reunião realizada", "follow-up", "negociação", "em aprovação", "faturado"]
-                    qtd_ok = len(df[df["Etapa"].str.lower().isin(etapas_ok)])
-                    base = total - qtd_sem_resp
-                    taxa = (qtd_ok / base * 100) if base > 0 else 0
-                    
-                    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-                    creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.environ.get("CREDENCIAIS_GOOGLE")), scope)
-                    client = gspread.authorize(creds)
-                    sh = client.open("BI_Historico")
-                    
-                    try:
-                        ws = sh.worksheet(marca_selecionada)
-                    except:
-                        ws = sh.add_worksheet(title=marca_selecionada, rows="1000", cols="20")
-                        ws.append_row(["Data", "Hora", "Semana", "Recorte", "Responsavel", "Equipe", "Total", "Andamento", "Perdidos", "Sem Resposta", "Taxa", "Top Fonte"])
+        if st.button("🚀 SALVAR NO GOOGLE SHEETS"):
+            try:
+                etapas_ok = ["qualificado", "reunião agendada", "reunião realizada", "follow-up", "negociação", "em aprovação", "faturado"]
+                qtd_ok = len(df[df["Etapa"].str.lower().isin(etapas_ok)])
+                base = total - qtd_sem_resp
+                taxa = (qtd_ok / base * 100) if base > 0 else 0
+                
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.environ.get("CREDENCIAIS_GOOGLE")), ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+                client = gspread.authorize(creds)
+                sh = client.open("BI_Historico")
+                
+                try: ws = sh.worksheet(marca_selecionada)
+                except: 
+                    ws = sh.add_worksheet(title=marca_selecionada, rows="1000", cols="20")
+                    ws.append_row(["Data", "Hora", "Semana", "Recorte", "Responsavel", "Equipe", "Total", "Andamento", "Perdidos", "Sem Resposta", "Taxa", "Top Fonte"])
 
-                    agora = datetime.now()
-                    top_f = df_f.iloc[0]['Fonte'] if not df_f.empty else "N/A"
-                    
-                    ws.append_row([
-                        agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), agora.strftime('%Y-W%W'),
-                        f"{min_d} a {max_d}", str(resp), str(equipe), int(total), int(em_andamento), int(perdidos), int(qtd_sem_resp), f"{taxa:.1f}%", str(top_f)
-                    ])
-                    st.success("✅ Salvo com sucesso!")
-                except Exception as e:
-                    st.error(f"Erro ao salvar: {e}")
+                agora = datetime.now()
+                ws.append_row([agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), agora.strftime('%Y-W%W'), f"{min_d} a {max_d}", str(resp), str(equipe), int(total), int(em_andamento), int(total-em_andamento), int(qtd_sem_resp), f"{taxa:.1f}%", str(df_f.iloc[0]['Fonte'])])
+                st.success("✅ Salvo!")
+            except Exception as e:
+                st.error(f"Erro: {e}")
