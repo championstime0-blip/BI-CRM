@@ -13,7 +13,7 @@ from datetime import datetime
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS (NEON/DARK)
+# ESTILIZAÇÃO CSS (MANTIDA)
 # =========================
 st.markdown("""
 <style>
@@ -105,7 +105,7 @@ def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
 
 # =========================
-# MOTOR DE PROCESSAMENTO (CORRIGIDO PARA EQUIPE)
+# MOTOR DE PROCESSAMENTO
 # =========================
 def load_csv(file):
     # Encoding Latin-1
@@ -121,15 +121,14 @@ def processar(df):
     # 2. Remoção imediata de colunas com mesmo nome
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # 3. Mapeamento Agressivo
+    # 3. Mapeamento
     cols_map = {}
     for c in df.columns:
         c_lower = str(c).lower()
         if "fonte" in c_lower and "utm" not in c_lower: cols_map[c] = "Fonte"
         elif "data de cri" in c_lower: cols_map[c] = "Data de Criação"
-        # Mapeamento específico para Responsável
         elif "respons" in c_lower and "equipe" not in c_lower: cols_map[c] = "Responsável"
-        # Mapeamento específico para Equipe (Caça "Equipes do responsável")
+        # Caça "Equipes do responsável" ou "Equipe"
         elif "equipes do respons" in c_lower or "equipe" in c_lower: cols_map[c] = "Equipe"
         elif c_lower == "motivo de perda": cols_map[c] = "Motivo de Perda"
         elif c_lower == "etapa": cols_map[c] = "Etapa"
@@ -137,7 +136,7 @@ def processar(df):
     df = df.rename(columns=cols_map)
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # 4. Tratamento de Dados (Cleaning)
+    # 4. Tratamento de Dados e Encoding
     colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
     
     for col in colunas_texto:
@@ -280,18 +279,27 @@ if arquivo:
         df = load_csv(arquivo)
         df = processar(df)
         
-        # --- LÓGICA DE RECUPERAÇÃO DA EQUIPE ---
-        # 1. Tenta pegar a moda da coluna 'Equipe'
+        # --- LÓGICA INTELIGENTE PARA EQUIPE ---
+        # 1. Tenta pegar a moda (valor mais comum) da coluna
         resp = df["Responsável"].mode()[0] if not df["Responsável"].empty else "N/A"
         
-        equipe_raw = "N/A"
         if "Equipe" in df.columns and not df["Equipe"].empty:
-             equipe_raw = df["Equipe"].mode()[0]
-
-        # 2. Correção forçada se vier com caracteres estranhos ou vazio
-        if any(x in str(equipe_raw) for x in ["Expans", "Ensina", "Geral", "nan", "N/A"]):
-             equipe = "Expansão Ensina Mais"
+             equipe_raw = str(df["Equipe"].mode()[0])
         else:
+             equipe_raw = "N/A"
+
+        # 2. Verifica qual marca está no texto, independentemente do "Expansão"
+        if "Prepara" in equipe_raw:
+             equipe = "Expansão Prepara"
+        elif "Microlins" in equipe_raw:
+             equipe = "Expansão Microlins"
+        elif "Ensina" in equipe_raw:
+             equipe = "Expansão Ensina Mais"
+        elif any(x in equipe_raw for x in ["Geral", "nan", "N/A", ""]): 
+             # Se for vazio, usa a marca selecionada no menu lateral como fallback
+             equipe = f"Expansão {marca_sel}"
+        else:
+             # Se for outro nome válido, mantém (ex: Comercial)
              equipe = equipe_raw
 
         # --- EXIBIÇÃO ---
