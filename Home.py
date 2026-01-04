@@ -13,7 +13,7 @@ from datetime import datetime
 st.set_page_config(page_title="BI CRM Expansão", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS (VERSÃO MESTRE FUTURISTA)
+# ESTILIZAÇÃO CSS
 # =========================
 st.markdown("""
 <style>
@@ -27,14 +27,6 @@ st.markdown("""
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     letter-spacing: 3px; margin-bottom: 10px; text-shadow: 0 0 30px rgba(34, 211, 238, 0.3);
 }
-
-.futuristic-sub {
-    font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; text-transform: uppercase;
-    color: #e2e8f0; letter-spacing: 2px; border-bottom: 1px solid #1e293b;
-    padding-bottom: 8px; margin-top: 30px; margin-bottom: 20px; display: flex; align-items: center;
-}
-
-.sub-icon { margin-right: 12px; font-size: 24px; color: #22d3ee; text-shadow: 0 0 10px rgba(34, 211, 238, 0.6); }
 
 .profile-header {
     background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
@@ -52,11 +44,15 @@ st.markdown("""
     padding: 24px; border-radius: 16px; border: 1px solid #1e293b; text-align: center;
     box-shadow: 0 0 15px rgba(56,189,248,0.05); height: 100%;
 }
-
 .card-title { font-family: 'Rajdhani', sans-serif; font-size: 14px; color: #94a3b8; text-transform: uppercase; }
 .card-value { font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700; background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 
-.date-card { background: rgba(15, 23, 42, 0.4); border: 1px solid #334155; border-radius: 12px; padding: 12px; text-align: center; margin-bottom: 30px; }
+.futuristic-sub {
+    font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; text-transform: uppercase;
+    color: #e2e8f0; letter-spacing: 2px; border-bottom: 1px solid #1e293b;
+    padding-bottom: 8px; margin-top: 30px; margin-bottom: 20px; display: flex; align-items: center;
+}
+.sub-icon { margin-right: 12px; font-size: 24px; color: #22d3ee; text-shadow: 0 0 10px rgba(34, 211, 238, 0.6); }
 .funnel-card { background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%); border-top: 2px solid #22d3ee; border-radius: 0 0 12px 12px; padding: 15px; text-align: center; }
 .funnel-percent { font-family: 'Orbitron', sans-serif; font-size: 32px; font-weight: 700; color: #22d3ee; margin: 5px 0; }
 .top-item { border-left: 3px solid #22d3ee; padding: 12px 15px; margin-bottom: 8px; border-radius: 0 8px 8px 0; display: flex; align-items: center; justify-content: space-between; background: rgba(34, 211, 238, 0.05); }
@@ -71,15 +67,6 @@ MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
 SEMANAS = ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"]
 
 # =========================
-# FUNÇÕES VISUAIS
-# =========================
-def card_kpi(title, value):
-    st.markdown(f'<div class="card"><div class="card-title">{title}</div><div class="card-value">{value}</div></div>', unsafe_allow_html=True)
-
-def subheader_futurista(icon, text):
-    st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
-
-# =========================
 # MOTOR DE PROCESSAMENTO
 # =========================
 def load_csv(file):
@@ -89,27 +76,32 @@ def load_csv(file):
     return pd.read_csv(file, sep=sep, engine="python", on_bad_lines="skip")
 
 def processar(df):
-    # Vacina contra colunas duplicadas
+    # Remove colunas duplicadas
     df = df.loc[:, ~df.columns.duplicated()].copy()
-    df.columns = df.columns.astype(str).str.strip()
     
+    # Mapeamento robusto de colunas
     cols_map = {}
     for c in df.columns:
-        c_low = c.lower()
+        c_clean = str(c).strip()
+        c_low = c_clean.lower()
+        
         if any(x in c_low for x in ["fonte", "origem", "source", "conversion origin"]): cols_map[c] = "Fonte"
         elif any(x in c_low for x in ["data de cri", "data da cri", "created date"]): cols_map[c] = "Data de Criação"
         elif any(x in c_low for x in ["dono", "respons", "owner"]): cols_map[c] = "Responsável"
-        # AJUSTE DA EQUIPE (Detectando variação de caracteres especiais do CSV)
-        elif any(x in c_low for x in ["equipe", "team", "equipes do respons"]): cols_map[c] = "Equipe"
+        # MAPEAMENTO ESPECÍFICO PARA A COLUNA COM ERRO DE ENCODING
+        elif "equipes do respons" in c_low or "equipe" in c_low: cols_map[c] = "Equipe"
         elif c_low == "etapa": cols_map[c] = "Etapa"
         elif "motivo" in c_low: cols_map[c] = "Motivo de Perda"
     
     df = df.rename(columns=cols_map)
     df = df.loc[:, ~df.columns.duplicated()].copy()
     
+    # Limpeza de valores
     df["Etapa"] = df["Etapa"].astype(str).str.strip()
-    df["Motivo de Perda"] = df.get("Motivo de Perda", pd.Series([""]*len(df))).astype(str).fillna("")
-    
+    df["Motivo de Perda"] = df.get("Motivo de Perda", "").astype(str).fillna("")
+    if "Equipe" in df.columns:
+        df["Equipe"] = df["Equipe"].astype(str).str.strip()
+
     if "Data de Criação" in df.columns:
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
     
@@ -131,65 +123,54 @@ def dashboard(df):
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
     
-    mask_sem_resp = (df["Etapa"].astype(str).str.contains("Aguardando Resposta", case=False, na=False)) & \
-                    (df["Motivo de Perda"].astype(str).str.contains("sem resposta", case=False, na=False))
-    perda_especifica = df[mask_sem_resp]
+    mask_sr = (df["Etapa"].astype(str).str.contains("Aguardando Resposta", case=False, na=False)) & \
+              (df["Motivo de Perda"].astype(str).str.contains("sem resposta", case=False, na=False))
+    perda_sr = df[mask_sr]
 
-    # --- KPIs ---
+    # KPIs
     c1, c2 = st.columns(2)
-    with c1: card_kpi("Leads Totais", total)
-    with c2: card_kpi("Leads em Andamento", len(em_andamento))
+    with c1: st.markdown(f'<div class="card"><div class="card-title">Leads Totais</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="card"><div class="card-title">Leads em Andamento</div><div class="card-value">{len(em_andamento)}</div></div>', unsafe_allow_html=True)
 
     st.divider()
 
-    # --- GRÁFICOS LINHA 1 ---
     col_mkt, col_funil = st.columns(2)
-
     with col_mkt:
-        subheader_futurista("📡", "MARKETING & FONTES")
-        df_fonte = df["Fonte"].value_counts().reset_index()
-        df_fonte.columns = ["Fonte", "Qtd"]
-        neon_colors = ['#22d3ee', '#06b6d4', '#0891b2', '#164e63', '#0e7490']
-        fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=neon_colors)
+        st.markdown('<div class="futuristic-sub"><span class="sub-icon">📡</span>MARKETING & FONTES</div>', unsafe_allow_html=True)
+        df_f = df["Fonte"].value_counts().reset_index()
+        df_f.columns = ["Fonte", "Qtd"]
+        fig_pie = px.pie(df_f, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2', '#164e63'])
         fig_pie.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
         st.plotly_chart(fig_pie, use_container_width=True)
         
-        st.markdown('<div style="font-family:Rajdhani; font-size:18px; color:#22d3ee; margin-bottom:15px; font-weight:700;">🏆 TOP 3 CANAIS</div>', unsafe_allow_html=True)
-        for i, row in df_fonte.head(3).iterrows():
-            st.markdown(f'<div class="top-item"><span>#{i+1} {row["Fonte"]}</span><b>{row["Qtd"]} leads</b></div>', unsafe_allow_html=True)
+        for i, row in df_f.head(3).iterrows():
+            st.markdown(f'<div class="top-item"><span>#{i+1} {row["Fonte"]}</span><b>{row["Qtd"]}</b></div>', unsafe_allow_html=True)
 
     with col_funil:
-        subheader_futurista("📉", "DESCIDA DE FUNIL")
-        df_funil = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
-        df_funil["Pct"] = (df_funil["Qtd"] / total * 100).round(1)
-        fig_funil = px.bar(df_funil, x="Qtd", y="Etapa", orientation="h", text=df_funil["Pct"].astype(str) + "%", color="Qtd", color_continuous_scale="Blues")
-        fig_funil.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", font_family="Rajdhani")
-        st.plotly_chart(fig_funil, use_container_width=True)
+        st.markdown('<div class="futuristic-sub"><span class="sub-icon">📉</span>DESCIDA DE FUNIL</div>', unsafe_allow_html=True)
+        df_fn = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
+        df_fn["Pct"] = (df_fn["Qtd"] / total * 100).round(1)
+        fig_fn = px.bar(df_fn, x="Qtd", y="Etapa", orientation="h", text=df_fn["Pct"].astype(str) + "%", color="Qtd", color_continuous_scale="Blues")
+        fig_fn.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_fn, use_container_width=True)
         
-        etapas_ok = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
-        qtd_ok = len(df[df['Etapa'].isin(etapas_ok)])
-        base_real = total - len(perda_especifica)
-        taxa = (qtd_ok / base_real * 100) if base_real > 0 else 0
-        st.markdown(f'<div class="funnel-card"><div style="color:#94a3b8; font-size:14px; text-transform:uppercase; font-family:Rajdhani;">🚀 Taxa de Avanço Real</div><div class="funnel-percent">{taxa:.1f}%</div></div>', unsafe_allow_html=True)
+        et_ok = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
+        qtd_ok = len(df[df['Etapa'].isin(et_ok)])
+        tx = (qtd_ok / (total - len(perda_sr)) * 100) if (total - len(perda_sr)) > 0 else 0
+        st.markdown(f'<div class="funnel-card"><div style="color:#94a3b8; font-size:14px; text-transform:uppercase;">Taxa de Avanço Real</div><div class="funnel-percent">{tx:.1f}%</div></div>', unsafe_allow_html=True)
 
-    # --- PERDAS ---
     st.divider()
-    subheader_futurista("🚫", "DETALHE DAS PERDAS")
-    cl1, cl2 = st.columns(2)
-    with cl1: card_kpi("Leads Improdutivos (Total)", len(perdidos))
-    with cl2: card_kpi("Perda: Sem Resposta", len(perda_especifica))
+    st.markdown('<div class="futuristic-sub"><span class="sub-icon">🚫</span>DETALHE DAS PERDAS</div>', unsafe_allow_html=True)
+    l1, l2 = st.columns(2)
+    with l1: st.markdown(f'<div class="card"><div class="card-title">Perdidos (Total)</div><div class="card-value">{len(perdidos)}</div></div>', unsafe_allow_html=True)
+    with l2: st.markdown(f'<div class="card"><div class="card-title">Sem Resposta</div><div class="card-value">{len(perda_sr)}</div></div>', unsafe_allow_html=True)
 
-    st.write("") 
-    df_loss = perdidos.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
-    df_loss["Pct"] = (df_loss["Qtd"] / total * 100).round(1)
-    df_loss["Label"] = df_loss.apply(lambda x: f"{int(x['Qtd'])} ({x['Pct']}%)", axis=1)
-
-    fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", text="Label", color="Qtd", color_continuous_scale="Purples")
-    fig_loss.update_traces(textposition='outside', marker_line_color='#818cf8', marker_line_width=1.5, textfont=dict(family="Orbitron", size=11, color="#e2e8f0"))
-    fig_loss.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, font_family="Rajdhani", xaxis_title="", yaxis_title="Volume de Perdas")
-    st.plotly_chart(fig_loss, use_container_width=True)
+    df_ls = perdidos.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
+    fig_ls = px.bar(df_ls, x="Etapa", y="Qtd", color="Qtd", color_continuous_scale="Purples", text_auto=True)
+    fig_ls.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig_ls, use_container_width=True)
     
-    return {"total": total, "and": len(em_andamento), "perd": len(perdidos), "sr": len(perda_especifica), "tx": taxa, "top": df_fonte.iloc[0]['Fonte'] if not df_fonte.empty else "N/A"}
+    return {"total": total, "and": len(em_andamento), "perd": len(perdidos), "sr": len(perda_sr), "tx": tx, "top": df_f.iloc[0]['Fonte'] if not df_f.empty else "N/A"}
 
 # =========================
 # APP MAIN
@@ -204,10 +185,9 @@ if arquivo:
     try:
         df = processar(load_csv(arquivo))
         
-        # Identificação dos dados do Responsável e Equipe
-        resp_v = df["Responsável"].iloc[0] if "Responsável" in df.columns else "N/A"
-        # BUSCA VALOR NA COLUNA EQUIPE (MAPEADA ANTERIORMENTE)
-        equipe_v = df["Equipe"].iloc[0] if "Equipe" in df.columns else "Geral"
+        # IDENTIFICAÇÃO DOS CARDS SUPERIORES
+        resp_v = df["Responsável"].mode()[0] if "Responsável" in df.columns and not df["Responsável"].empty else "N/A"
+        equipe_v = df["Equipe"].mode()[0] if "Equipe" in df.columns and not df["Equipe"].empty else "Não Definida"
         
         st.markdown(f"""
         <div class="profile-header">
@@ -217,17 +197,10 @@ if arquivo:
         </div>
         """, unsafe_allow_html=True)
 
-        recorte_info = "N/A"
-        if "Data de Criação" in df.columns:
-            min_d, max_d = df["Data de Criação"].min().strftime('%d/%m/%Y'), df["Data de Criação"].max().strftime('%d/%m/%Y')
-            recorte_info = f"{min_d} a {max_d}"
-            st.markdown(f'<div class="date-card"><div style="color:#64748b; font-size:13px; text-transform:uppercase; font-family:Rajdhani;">📅 Recorte Temporal</div><div style="font-family:Orbitron; font-size:18px; color:#94a3b8;">{min_d} a {max_d}</div></div>', unsafe_allow_html=True)
+        kpis = dashboard(df)
 
-        resumo = dashboard(df)
-
-        st.sidebar.markdown("---")
         if st.sidebar.button(f"💾 SALVAR DADOS: {semana_ref}"):
-            with st.spinner("Salvando no Google Sheets..."):
+            with st.spinner("Salvando..."):
                 try:
                     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
                     creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.environ.get("CREDENCIAIS_GOOGLE")), scope)
@@ -236,12 +209,14 @@ if arquivo:
                     try: ws = sh.worksheet(marca)
                     except:
                         ws = sh.add_worksheet(title=marca, rows="1000", cols="20")
-                        ws.append_row(["Data", "Hora", "Semana", "Recorte", "Responsável", "Equipe", "Total", "Andamento", "Perdidos", "Sem Resposta", "Taxa", "Top Fonte"])
+                        ws.append_row(["Data", "Hora", "Semana", "Responsável", "Equipe", "Total", "Andamento", "Perdidos", "Sem Resposta", "Taxa", "Top Fonte"])
                     
                     agora = datetime.now()
-                    ws.append_row([agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), semana_ref, recorte_info, resp_v, equipe_v, resumo['total'], resumo['and'], resumo['perd'], resumo['sr'], f"{resumo['tx']:.1f}%", resumo['top']])
-                    st.sidebar.success(f"✅ Dados salvos!")
+                    ws.append_row([agora.strftime('%d/%m/%Y'), agora.strftime('%H:%M:%S'), semana_ref, resp_v, equipe_v, kpis['total'], kpis['and'], kpis['perd'], kpis['sr'], f"{kpis['tx']:.1f}%", kpis['top']])
+                    st.sidebar.success("✅ Salvo!")
                     st.balloons()
                 except Exception as e: st.sidebar.error(f"Erro: {e}")
 
-    except Exception as e: st.error(f"Erro no processamento: {e}")
+    except Exception as e:
+        st.error("Erro no processamento do arquivo")
+        st.exception(e)
