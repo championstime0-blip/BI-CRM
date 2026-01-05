@@ -151,7 +151,6 @@ def processar(df):
 # =========================
 def render_dashboard(df, marca):
     total = len(df)
-    # Filtro robusto para perdas baseado no Estado "Perdida" e motivos válidos
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
     
@@ -207,7 +206,6 @@ def render_dashboard(df, marca):
         c_fun1, c_fun2 = st.columns(2)
         reuniao_realizada_plus = len(df[df["Etapa"].isin(["Reunião Realizada", "negociação", "em aprovação", "faturado"])])
         
-        # Leads sem contato: Perdidos na etapa 'Aguardando Resposta' com motivo 'Sem Resposta'
         leads_sem_contato_count = len(perdidos[(perdidos["Etapa"] == "Aguardando Resposta") & 
                                         (perdidos["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))])
         
@@ -217,7 +215,6 @@ def render_dashboard(df, marca):
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
     
-    # --- CORREÇÃO DO GRÁFICO DE PERDAS ---
     motivos_reais = perdidos["Motivo de Perda"].unique()
     lista_final_grafico = list(set(motivos_reais) | set(MOTIVOS_PERDA_MESTRADOS))
     
@@ -228,10 +225,8 @@ def render_dashboard(df, marca):
     df_loss["Perc"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
     df_loss["Label_Text"] = df_loss.apply(lambda x: f"{int(x['Qtd'])} ({x['Perc']}%)", axis=1)
     
-    # Cores: Verde Esmeralda para destaque, gradiente de cinza/azul para os demais (mais fácil de enxergar)
     df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#10b981' if 'sem resposta' in str(x).lower() else '#334155')
     
-    # Ajuste visual: Barras horizontais mais largas e limpas
     fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Label_Text", orientation="h",
                       color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
     
@@ -265,18 +260,28 @@ if arquivo:
         equipe = f"Expansão {marca_sel}"
         st.markdown(f"""<div class="profile-header"><div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp}</span></div><div class="profile-divider"></div><div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe}</span></div></div>""", unsafe_allow_html=True)
         render_dashboard(df, marca_sel)
+        
+        # BOTAO AJUSTADO PARA GERAR CABEÇALHO SE VAZIO
         if st.sidebar.button(f"🚀 SALVAR HISTÓRICO: {semana_sel}"):
             client = conectar_google()
             if client:
                 sh = client.open("BI_Historico")
                 try: ws = sh.worksheet("db_snapshots")
                 except: ws = sh.add_worksheet(title="db_snapshots", rows="1000", cols="20")
+                
                 df_save = df.copy()
                 df_save['snapshot_id'] = datetime.now().strftime("%Y%m%d_%H%M%S")
                 df_save['data_salvamento'] = datetime.now().strftime('%d/%m/%Y %H:%M')
                 df_save['semana_ref'] = semana_sel
                 df_save['marca_ref'] = marca_sel
+                
+                # VERIFICA SE ESTÁ VAZIO E GERA CABEÇALHO
+                current_data = ws.get_all_values()
+                if not current_data:
+                    ws.append_row(df_save.columns.tolist())
+                    
                 ws.append_rows(df_save.astype(str).values.tolist())
-                st.sidebar.success("Snapshot salvo!")
+                st.sidebar.success("Snapshot e Cabeçalhos salvos com sucesso!")
+                
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
