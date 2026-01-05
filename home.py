@@ -6,6 +6,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import os
 from datetime import datetime
+import io
 
 # =========================
 # CONFIGURAÇÃO DA PÁGINA
@@ -82,15 +83,30 @@ def card(title, value):
 def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
 
+# =========================
+# MOTOR DE PROCESSAMENTO (CORRIGIDO)
+# =========================
 def load_csv(file):
     raw = file.read().decode("latin-1", errors="ignore")
+    
+    # TRATAMENTO PARA IGNORAR LINHA 'sep=' DO RD STATION
+    if raw.strip().startswith("sep="):
+        # Remove a primeira linha e mantém o resto
+        raw = "\n".join(raw.splitlines()[1:])
+        
+    # Identifica o separador nos dados reais
     sep = ";" if raw.count(";") > raw.count(",") else ","
-    file.seek(0)
-    return pd.read_csv(file, sep=sep, engine="python", on_bad_lines="skip")
+    
+    return pd.read_csv(io.StringIO(raw), sep=sep, engine="python", on_bad_lines="skip")
 
 def processar(df):
+    # 1. Limpeza de espaços nos nomes das colunas
     df.columns = df.columns.str.strip()
+    
+    # 2. Remoção imediata de colunas com mesmo nome
     df = df.loc[:, ~df.columns.duplicated()]
+
+    # 3. Mapeamento Robusto
     cols_map = {}
     for c in df.columns:
         c_lower = str(c).lower()
@@ -98,18 +114,36 @@ def processar(df):
         elif "data de cri" in c_lower: cols_map[c] = "Data de Criação"
         elif "respons" in c_lower and "equipe" not in c_lower: cols_map[c] = "Responsável"
         elif "equipes do respons" in c_lower or "equipe" in c_lower: cols_map[c] = "Equipe"
-        elif c_lower == "motivo de perda": cols_map[c] = "Motivo de Perda"
-        elif c_lower == "etapa": cols_map[c] = "Etapa"
+        elif "motivo de perda" in c_lower: cols_map[c] = "Motivo de Perda"
+        elif "etapa" in c_lower: cols_map[c] = "Etapa"
+
     df = df.rename(columns=cols_map)
-    df["Etapa"] = df["Etapa"].astype(str).str.strip()
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    # 4. Tratamento de Dados e Encoding
+    colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
+    
+    for col in colunas_texto:
+        if col in df.columns:
+            if isinstance(df[col], pd.DataFrame):
+                df[col] = df[col].iloc[:, 0]
+            
+            # Limpeza de caracteres especiais
+            df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
+            df[col] = df[col].str.strip()
+        else:
+            df[col] = "N/A"
+
     if "Data de Criação" in df.columns:
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
+    
     def status_func(row):
         etapa_lower = str(row["Etapa"]).lower()
         if any(x in etapa_lower for x in ["faturado", "ganho", "venda"]): return "Ganho"
         motivo = str(row["Motivo de Perda"]).strip().lower()
-        if motivo not in ["", "nan", "none", "-", "nan", "0", "nada"]: return "Perdido"
+        if motivo not in ["", "nan", "none", "-", "0", "nada"]: return "Perdido"
         return "Em Andamento"
+        
     df["Status"] = df.apply(status_func, axis=1)
     return df
 
@@ -152,7 +186,7 @@ def render_dashboard(df, marca):
             funil_values.append(qtd)
 
         df_plot = pd.DataFrame({"Etapa": funil_labels, "Quantidade": funil_values})
-        df_plot["Percentual"] = (df_plot["Quantidade"] / total * 100).round(1)
+        df_plot["Percentual"] = (df_plot["Quantidade"] / total * 100).round(1) if total > 0 else 0
         df_plot["Label"] = df_plot.apply(lambda x: f"{int(x['Quantidade'])} ({x['Percentual']}%)", axis=1)
 
         fig_funil = px.bar(df_plot, y="Etapa", x="Quantidade", text="Label", orientation="h",
@@ -165,9 +199,7 @@ def render_dashboard(df, marca):
         
         c_fun1, c_fun2 = st.columns(2)
         reuniao_realizada_plus = len(df[df["Etapa"].isin(["Reunião Realizada", "negociação", "em aprovação", "faturado"])])
-        
-        # AJUSTE: Leads sem contato (Perdidos em 'Aguardando Resposta' por 'sem resposta')
-        leads_sem_contato_count = len(perdidos[(perdidos["Etapa"] == "Aguardando Resposta") & 
+        leads_sem_contato_count = len(perdidos[(perdidos["Etapa"].str.contains("Aguardando Resposta", na=False)) & 
                                         (perdidos["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))])
         
         with c_fun1: card("Reunião Realizada (+)", reuniao_realizada_plus)
@@ -180,23 +212,14 @@ def render_dashboard(df, marca):
         perdas_validas = perdidos[~perdidos["Motivo de Perda"].isin(["", "nan", "N/A", "None"])]
         df_loss = perdas_validas["Motivo de Perda"].value_counts().reset_index()
         df_loss.columns = ["Motivo", "Qtd"]
-        
-        # Ordenação Decrescente (Maior para o menor)
         df_loss = df_loss.sort_values(by="Qtd", ascending=False).head(15)
         
-        # AJUSTE: Cor Verde para "sem resposta" na etapa "Aguardando Resposta", Vermelho para os outros
-        # Precisamos identificar no dataframe de perdas o motivo exato
         df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#4ade80' if 'sem resposta' in str(x).lower() else '#ef4444')
         
         fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h",
                           color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
         
-        fig_loss.update_layout(
-            template="plotly_dark", 
-            showlegend=False, 
-            paper_bgcolor="rgba(0,0,0,0)", 
-            yaxis=dict(autorange="reversed") # Mantém o maior no topo
-        )
+        fig_loss.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig_loss, use_container_width=True)
         
         k1, k2 = st.columns(2)
@@ -243,4 +266,4 @@ if arquivo:
                 ws.append_rows(df_save.astype(str).values.tolist())
                 st.sidebar.success("Snapshot salvo!")
     except Exception as e:
-        st.error(f"Erro: {e}")
+        st.error(f"Erro no processamento: {e}")
