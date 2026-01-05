@@ -13,7 +13,7 @@ from datetime import datetime
 st.set_page_config(page_title="Histórico | Time Machine", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS
+# ESTILIZAÇÃO CSS (CÓPIA EXATA DA HOME)
 # =========================
 st.markdown("""
 <style>
@@ -55,21 +55,12 @@ st.markdown("""
     font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700;
     background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
-.funnel-card {
-    background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%); border-top: 2px solid #22d3ee;
-    border-radius: 0 0 12px 12px; padding: 15px; text-align: center; margin-top: -10px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-.funnel-label { font-family: 'Rajdhani', sans-serif; font-size: 14px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; }
-.funnel-percent { font-family: 'Orbitron', sans-serif; font-size: 32px; font-weight: 700; color: #22d3ee; margin: 5px 0; }
-.funnel-sub { font-size: 10px; color: #64748b; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# CONSTANTES & CONEXÃO
+# CONEXÃO GOOGLE
 # =========================
-ETAPAS_ORDEM = ["faturado", "em aprovação", "negociação", "Follow-up", "Reunião Realizada", "Reunião Agendada", "Qualificado", "Confirmou Interesse", "Aguardando Resposta", "Sem contato"]
-
 def conectar_google():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -83,6 +74,9 @@ def conectar_google():
     except Exception as e:
         return None
 
+# =========================
+# UTILS VISUAIS
+# =========================
 def card(title, value):
     st.markdown(f'<div class="card"><div class="card-title">{title}</div><div class="card-value">{value}</div></div>', unsafe_allow_html=True)
 
@@ -96,9 +90,11 @@ def processar_snapshot(df):
         if any(x in etapa_lower for x in ["faturado", "ganho", "venda"]): return "Ganho"
         if motivo not in ["", "nan", "none", "-", "nan", "0", "nada", "n/a"]: return "Perdido"
         return "Em Andamento"
-    if "Status" not in df.columns: df["Status"] = df.apply(status, axis=1)
-    if "Data de Criação" in df.columns: df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], errors='coerce')
-    if "Fonte" in df.columns: df["Fonte"] = df["Fonte"].fillna("Desconhecido").astype(str)
+    
+    if "Status" not in df.columns:
+        df["Status"] = df.apply(status, axis=1)
+    if "Data de Criação" in df.columns:
+        df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], errors='coerce')
     return df
 
 # =========================
@@ -107,15 +103,7 @@ def processar_snapshot(df):
 def render_dashboard_completo(df):
     # Header de Perfil
     resp = df["Responsável"].mode()[0] if "Responsável" in df.columns and not df["Responsável"].empty else "N/A"
-    equipe = "N/A"
-    if "Equipe" in df.columns and not df["Equipe"].empty:
-         equipe_raw = str(df["Equipe"].mode()[0])
-         if "Prepara" in equipe_raw: equipe = "Expansão Prepara"
-         elif "Microlins" in equipe_raw: equipe = "Expansão Microlins"
-         elif "Ensina" in equipe_raw: equipe = "Expansão Ensina Mais"
-         else: equipe = equipe_raw
-    elif "marca_ref" in df.columns:
-         equipe = f"Expansão {df['marca_ref'].iloc[0]}"
+    equipe = f"Expansão {df['marca_ref'].iloc[0]}" if 'marca_ref' in df.columns else "N/A"
 
     st.markdown(f"""
     <div class="profile-header">
@@ -124,35 +112,13 @@ def render_dashboard_completo(df):
         <div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe}</span></div>
     </div>""", unsafe_allow_html=True)
     
-    total_leads = len(df)
+    total = len(df)
+    perdidos = df[df["Status"] == "Perdido"]
+    em_andamento = df[df["Status"] == "Em Andamento"]
     
-    # --- LÓGICA ACUMULATIVA DE FUNIL ---
-    def count_at_least(etapa_nome):
-        try:
-            idx = ETAPAS_ORDEM.index(etapa_nome)
-            etapas_alvo = ETAPAS_ORDEM[:idx+1] # Pega a etapa e todas as "anteriores" na lista (que são mais avançadas)
-            return len(df[df["Etapa"].isin(etapas_alvo)])
-        except: return 0
-
-    funil_data = []
-    for etapa in reversed(ETAPAS_ORDEM):
-        qtd = count_at_least(etapa)
-        perc = (qtd / total_leads * 100) if total_leads > 0 else 0
-        funil_data.append({"Etapa": etapa.upper(), "Qtd": qtd, "Perc": perc})
-    df_funil_plot = pd.DataFrame(funil_data)
-
-    # --- CARDS DE PERFORMANCE ---
-    # 1# Reunião Realizada e Etapas Seguintes
-    reuniao_realizada_plus = count_at_least("Reunião Realizada")
-    # 2# Aguardando Resposta sem os Perdidos
-    aguardando_vivos = len(df[(df["Etapa"] == "Aguardando Resposta") & (df["Status"] != "Perdido")])
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: card("Leads Totais", total_leads)
-    with c2: card("Leads em Andamento", len(df[df["Status"]=="Em Andamento"]))
-    with c3: card("Reunião Realizada (+)", reuniao_realizada_plus)
-    with c4: card("Aguardando Resposta", aguardando_vivos)
-    
+    c1, c2 = st.columns(2)
+    with c1: card("Leads Totais (Snapshot)", total)
+    with c2: card("Leads em Andamento", len(em_andamento))
     st.divider()
 
     col_mkt, col_funil = st.columns(2)
@@ -162,31 +128,58 @@ def render_dashboard_completo(df):
         if "Fonte" in df.columns:
             df_fonte = df["Fonte"].value_counts().reset_index()
             df_fonte.columns = ["Fonte", "Qtd"]
-            fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2', '#155e75'])
-            fig_pie.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
+            fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2'])
+            fig_pie.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
 
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL (ACUMULADO)")
-        fig_funil = px.bar(df_funil_plot, x="Qtd", y="Etapa", orientation="h",
-                          text=df_funil_plot["Perc"].apply(lambda x: f"{x:.1f}%"),
-                          color="Qtd", color_continuous_scale="Blues")
-        fig_funil.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_funil, use_container_width=True)
+        
+        # LÓGICA ACUMULATIVA IDENTICA À HOME
+        etapas_invertidas = ["faturado", "em aprovação", "negociação", "Reunião Realizada", "Reunião Agendada", "Qualificado", "Confirmou Interesse"]
+        funil_labels = ["TOTAL DE LEADS"]
+        funil_values = [total]
+        
+        for etapa in etapas_invertidas:
+            # Soma quem está na etapa ou nas etapas seguintes (mais avançadas)
+            qtd = len(df[df["Etapa"].isin(etapas_invertidas[:etapas_invertidas.index(etapa)+1])])
+            funil_labels.append(etapa.upper())
+            funil_values.append(qtd)
 
-    # Detalhe das Perdas por Motivo
+        df_plot = pd.DataFrame({"Etapa": funil_labels, "Quantidade": funil_values})
+        df_plot["Percentual"] = (df_plot["Quantidade"] / total * 100).round(1)
+        df_plot["Label"] = df_plot.apply(lambda x: f"{int(x['Quantidade'])}<br>{x['Percentual']}%", axis=1)
+
+        # Gráfico de Palos Verticais
+        fig_funil = px.bar(df_plot, x="Etapa", y="Quantidade", text="Label", color="Quantidade", color_continuous_scale="Blues")
+        fig_funil.update_traces(textposition='outside')
+        fig_funil.update_layout(
+            template="plotly_dark", showlegend=False, 
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            xaxis={'categoryorder':'array', 'categoryarray':funil_labels}
+        )
+        st.plotly_chart(fig_funil, use_container_width=True)
+        
+        # CARDS EMBAIXO DO FUNIL (CONFORME SOLICITADO)
+        c_fun1, c_fun2 = st.columns(2)
+        reuniao_realizada_plus = len(df[df["Etapa"].isin(["Reunião Realizada", "negociação", "em aprovação", "faturado"])])
+        aguardando_andamento = len(df[(df["Etapa"] == "Aguardando Resposta") & (df["Status"] == "Em Andamento")])
+        
+        with c_fun1: card("Reunião Realizada (+)", reuniao_realizada_plus)
+        with c_fun2: card("Aguardando Resposta (Ativos)", aguardando_andamento)
+
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
-    perdidos = df[df["Status"] == "Perdido"]
     if not perdidos.empty:
-        df_loss = perdidos["Motivo de Perda"].value_counts().reset_index().head(15)
+        perdas_validas = perdidos[~perdidos["Motivo de Perda"].isin(["", "nan", "N/A", "None"])]
+        df_loss = perdas_validas["Motivo de Perda"].value_counts().reset_index().head(15)
         df_loss.columns = ["Motivo", "Qtd"]
         fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", orientation="h", color="Qtd", color_continuous_scale="Reds")
         fig_loss.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig_loss, use_container_width=True)
 
 # =========================
-# APP MAIN
+# APP MAIN (TIME MACHINE)
 # =========================
 st.markdown('<div class="futuristic-title">🕰️ Máquina do Tempo</div>', unsafe_allow_html=True)
 
@@ -198,9 +191,14 @@ with st.spinner("Sincronizando com o banco de dados..."):
             sh = client.open("BI_Historico")
             ws = sh.worksheet("db_snapshots")
             dados = ws.get_all_values()
-            if len(dados) > 1: df_db = pd.DataFrame(dados[1:], columns=dados[0])
-            else: st.stop()
-        except: st.stop()
+            if len(dados) > 1:
+                df_db = pd.DataFrame(dados[1:], columns=dados[0])
+            else:
+                st.warning("Banco de dados vazio.")
+                st.stop()
+        except Exception as e:
+            st.error(f"Erro de conexão: {e}")
+            st.stop()
 
 if not df_db.empty:
     st.sidebar.header("🗂️ Filtros de Busca")
@@ -209,7 +207,8 @@ if not df_db.empty:
     meses_pt = {1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho", 7:"Julho", 8:"Agosto", 9:"Setembro", 10:"Outubro", 11:"Novembro", 12:"Dezembro"}
     df_db['Mes_Filtro'] = df_db['data_dt'].dt.month.map(meses_pt)
     
-    f_marca = st.sidebar.selectbox("1. Marca", sorted(df_db['marca_ref'].unique()))
+    marcas_disp = sorted(df_db['marca_ref'].unique())
+    f_marca = st.sidebar.selectbox("1. Marca", marcas_disp)
     df_f1 = df_db[df_db['marca_ref'] == f_marca]
     
     anos_disp = sorted(df_f1['Ano_Filtro'].unique(), reverse=True)
