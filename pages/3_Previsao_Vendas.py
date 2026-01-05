@@ -12,35 +12,57 @@ from datetime import datetime
 st.set_page_config(page_title="Previsão de Vendas", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS (Futurista)
+# ESTILIZAÇÃO CSS (PREMIUM)
 # =========================
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@500;600;700&display=swap');
 .stApp { background-color: #0b0f1a; color: #e0e0e0; }
 
+/* Títulos */
 .futuristic-header {
     font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 900; text-transform: uppercase;
     background: linear-gradient(90deg, #22d3ee 0%, #a855f7 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     text-shadow: 0 0 20px rgba(34, 211, 238, 0.4); margin-bottom: 20px;
 }
-.kpi-card {
-    background: linear-gradient(135deg, #1e293b, #0f172a); border: 1px solid #334155;
-    padding: 15px; border-radius: 10px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-}
-.kpi-val { font-family: 'Orbitron'; font-size: 24px; color: #4ade80; }
-.kpi-lbl { font-family: 'Rajdhani'; font-size: 14px; color: #94a3b8; text-transform: uppercase; }
 
-div[data-testid="stDataEditor"] { border: 1px solid #22d3ee; border-radius: 5px; }
+/* Card de Marca no Topo */
+.brand-banner {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    border-left: 5px solid #22d3ee;
+    border-radius: 8px; padding: 20px; margin-bottom: 25px;
+    box-shadow: 0 4px 15px rgba(34, 211, 238, 0.15);
+    display: flex; align-items: center; justify-content: center;
+}
+.brand-name {
+    font-family: 'Orbitron'; font-size: 32px; color: #fff; text-transform: uppercase; letter-spacing: 2px;
+}
+
+/* Cards de KPI */
+.kpi-card {
+    background: linear-gradient(135deg, #1e293b, #111827); border: 1px solid #334155;
+    padding: 20px; border-radius: 12px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    transition: transform 0.2s;
+}
+.kpi-card:hover { transform: translateY(-3px); border-color: #22d3ee; }
+.kpi-val { font-family: 'Orbitron'; font-size: 28px; color: #4ade80; margin-top: 5px; }
+.kpi-val-loss { font-family: 'Orbitron'; font-size: 28px; color: #f87171; margin-top: 5px; } /* Vermelho para perda */
+.kpi-val-wait { font-family: 'Orbitron'; font-size: 28px; color: #fbbf24; margin-top: 5px; } /* Amarelo para espera */
+.kpi-lbl { font-family: 'Rajdhani'; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+
+/* Ajuste na Tabela Editável */
+div[data-testid="stDataEditor"] { 
+    border: 1px solid #334155; border-radius: 8px; overflow: hidden;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
 # CONEXÃO GOOGLE SHEETS
 # =========================
-# Definição das colunas obrigatórias para evitar KeyError
-COLUNAS_OBRIGATORIAS = ["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"]
+COLUNAS_PADRAO = ["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"]
+PLANILHA_NOME = "BI_Historico"
 
 def conectar_google():
     try:
@@ -54,85 +76,68 @@ def conectar_google():
         return gspread.authorize(creds)
     except: return None
 
-PLANILHA_NOME = "BI_Historico"
-
 # =========================
-# FUNÇÕES DE BANCO DE DADOS (ROBUSTAS)
+# FUNÇÕES DE BANCO DE DADOS
 # =========================
-
 def carregar_aba(nome_aba):
-    """Carrega dados e GARANTE que as colunas existem para não dar erro."""
     client = conectar_google()
-    # Se falhar conexão, retorna vazio com colunas certas
-    if not client: return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
-    
+    if not client: return pd.DataFrame(columns=COLUNAS_PADRAO)
     try:
         sh = client.open(PLANILHA_NOME)
-        
-        # Tenta abrir a aba, se não existir, cria
-        try:
-            ws = sh.worksheet(nome_aba)
-        except:
+        try: ws = sh.worksheet(nome_aba)
+        except: 
             ws = sh.add_worksheet(nome_aba, 1000, 20)
-            ws.append_row(COLUNAS_OBRIGATORIAS) # Cria cabeçalho
-            return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
-            
-        dados = ws.get_all_values()
-        
-        # Se estiver vazia (sem nem cabeçalho)
-        if not dados:
-            ws.append_row(COLUNAS_OBRIGATORIAS)
-            return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
-            
-        # Carrega DataFrame
-        df = pd.DataFrame(dados[1:], columns=dados[0])
-        
-        # VERIFICAÇÃO DE SEGURANÇA (CORREÇÃO DO KEYERROR)
-        # Se o cabeçalho estiver errado (ex: não tem 'Valor'), ignora os dados e retorna vazio estruturado
-        if 'Valor' not in df.columns or 'Marca' not in df.columns:
-            # Opcional: Poderiamos limpar a aba aqui, mas por segurança apenas retornamos o DF vazio correto
-            return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
-            
-        # Tratamento de tipos
-        df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
-        return df
+            ws.append_row(COLUNAS_PADRAO)
+            return pd.DataFrame(columns=COLUNAS_PADRAO)
 
-    except Exception as e:
-        # Em caso de qualquer erro catastrófico, não quebra a tela
-        return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
+        dados = ws.get_all_values()
+        if not dados: return pd.DataFrame(columns=COLUNAS_PADRAO)
+
+        # Tratamento de Cabeçalho Flexível
+        header = [h.strip() for h in dados[0]]
+        if "Consultor" in header and "Valor" in header:
+            df = pd.DataFrame(dados[1:], columns=header)
+        else:
+            # Se não tem cabeçalho, assume que é dado e usa padrão
+            if len(dados[0]) >= len(COLUNAS_PADRAO):
+                 if dados[0][0] == "Consultor": 
+                     df = pd.DataFrame(dados[1:], columns=COLUNAS_PADRAO)
+                 else:
+                     df = pd.DataFrame(dados, columns=COLUNAS_PADRAO)
+            else:
+                 return pd.DataFrame(columns=COLUNAS_PADRAO)
+
+        # Limpeza Numérica
+        if 'Valor' in df.columns:
+            df['Valor'] = df['Valor'].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
+            
+        return df
+    except: return pd.DataFrame(columns=COLUNAS_PADRAO)
 
 def salvar_full(nome_aba, df):
     client = conectar_google()
-    if not client: return
     sh = client.open(PLANILHA_NOME)
-    try:
-        ws = sh.worksheet(nome_aba)
-    except:
-        ws = sh.add_worksheet(nome_aba, 1000, 20)
-    
+    try: ws = sh.worksheet(nome_aba)
+    except: ws = sh.add_worksheet(nome_aba, 1000, 20)
     ws.clear()
-    # Garante que salva como string para não bugar JSON
-    df_save = df.copy()
-    df_save = df_save.astype(str)
+    df_save = df.copy().astype(str)
     ws.update([df_save.columns.values.tolist()] + df_save.values.tolist())
 
 def adicionar_lead(dados):
     client = conectar_google()
-    if not client: return
     sh = client.open(PLANILHA_NOME)
-    try:
-        ws = sh.worksheet("previsao_ativa")
-    except:
-        ws = sh.add_worksheet("previsao_ativa", 1000, 20)
+    try: ws = sh.worksheet("previsao_ativa")
+    except: ws = sh.add_worksheet("previsao_ativa", 1000, 20)
     
-    # Se vazia, põe cabeçalho antes
-    if not ws.get_all_values():
-        ws.append_row(COLUNAS_OBRIGATORIAS)
+    vals = ws.get_all_values()
+    if not vals: ws.append_row(COLUNAS_PADRAO)
+    elif vals[0][0] != "Consultor": ws.insert_row(COLUNAS_PADRAO, 1)
     
     ws.append_row(dados)
 
 # =========================
-# UI - CADASTRO LATERAL
+# BARRA LATERAL (Cadastro)
 # =========================
 st.sidebar.markdown("### 📝 Nova Previsão")
 with st.sidebar.form("form_add"):
@@ -145,30 +150,37 @@ with st.sidebar.form("form_add"):
     f_marca = st.selectbox("Marca", marcas_opts)
     f_valor = st.number_input("Valor Previsto (R$)", min_value=0.0, step=100.0)
     
-    submitted = st.form_submit_button("💾 Cadastrar Previsão")
-    if submitted:
+    if st.form_submit_button("💾 Cadastrar"):
         if f_lead and f_consultor:
             dados = [f_consultor, f_lead, f_cidade, f_campanha, f_marca, f_valor, datetime.now().strftime("%d/%m/%Y")]
             adicionar_lead(dados)
-            st.success("Cadastrado com sucesso!")
+            st.success("Cadastrado!")
             st.rerun()
-        else:
-            st.error("Preencha Consultor e Lead.")
+        else: st.error("Preencha Consultor e Lead.")
 
 # =========================
-# UI - PAINEL PRINCIPAL
+# PAINEL PRINCIPAL
 # =========================
 st.markdown('<div class="futuristic-header">🔮 Painel de Previsão de Vendas</div>', unsafe_allow_html=True)
 
-# Filtro Global
-filtro_marca = st.selectbox("Filtrar Visão por Marca:", ["TODAS"] + marcas_opts)
+# 1. Filtro Global
+col_filter, _ = st.columns([1, 2])
+with col_filter:
+    filtro_marca = st.selectbox("Filtrar Visão por Marca:", ["TODAS"] + marcas_opts)
 
-# Carrega Dados (Agora blindado contra erro)
+# 2. CARD DE CABEÇALHO (O PEDIDO DO USUÁRIO)
+if filtro_marca != "TODAS":
+    st.markdown(f"""
+    <div class="brand-banner">
+        <div class="brand-name">{filtro_marca}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Carregar Dados
 df_ativos = carregar_aba("previsao_ativa")
 df_prorrog = carregar_aba("prorrogacao")
 df_desist = carregar_aba("desistencia")
 
-# Aplica Filtro Visual
 def filtrar(df):
     if filtro_marca != "TODAS" and not df.empty and "Marca" in df.columns:
         return df[df["Marca"] == filtro_marca]
@@ -180,166 +192,165 @@ tab1, tab2, tab3 = st.tabs(["🎯 Previsão Ativa", "⏳ Prorrogações", "🚫 
 # --- TAB 1: ATIVOS ---
 with tab1:
     df_view = filtrar(df_ativos)
-    
-    # KPIs Rápidos
     total_prev = df_view['Valor'].sum() if not df_view.empty else 0.0
-    leads_count = len(df_view)
     
-    k1, k2 = st.columns(2)
-    with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-lbl">Valor em Pipeline</div><div class="kpi-val">R$ {total_prev:,.2f}</div></div>', unsafe_allow_html=True)
-    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-lbl">Leads Ativos</div><div class="kpi-val">{leads_count}</div></div>', unsafe_allow_html=True)
+    # KPI
+    col_k1, col_k2, _ = st.columns([1, 1, 2])
+    with col_k1: st.markdown(f'<div class="kpi-card"><div class="kpi-lbl">Pipeline Ativo</div><div class="kpi-val">R$ {total_prev:,.2f}</div></div>', unsafe_allow_html=True)
+    with col_k2: st.markdown(f'<div class="kpi-card"><div class="kpi-lbl">Leads na Mesa</div><div class="kpi-val">{len(df_view)}</div></div>', unsafe_allow_html=True)
     
     st.divider()
-    
+
     if not df_ativos.empty:
-        st.info("Edite o **Valor** diretamente na tabela ou escolha uma **Ação** e clique em Processar.")
+        df_ativos['Ação'] = "Manter" # Valor padrão
         
-        # Coluna de controle
-        df_ativos['Ação'] = "Manter" 
-        
-        # Configuração das Colunas
-        col_config = {
-            "Valor": st.column_config.NumberColumn("Valor Previsto", format="R$ %.2f", min_value=0, required=True),
+        # Configuração VISUAL AMIGÁVEL da Tabela
+        col_conf = {
+            "Valor": st.column_config.NumberColumn(
+                "Valor Previsto", 
+                format="R$ %.2f", 
+                min_value=0, 
+                help="Valor estimado de fechamento"
+            ),
             "Ação": st.column_config.SelectboxColumn(
-                "Ação (Mover)",
+                "O que fazer?",
                 options=["Manter", "Prorrogar", "Desistência"],
                 required=True,
-                help="Selecione o destino deste lead"
+                width="medium",
+                help="Mude para mover o lead de aba"
             ),
-            "Marca": st.column_config.SelectboxColumn("Marca", options=marcas_opts, required=True),
-            "Data_Registro": st.column_config.TextColumn("Data", disabled=True)
+            "Marca": st.column_config.TextColumn("Marca", width="small", disabled=True),
+            "Lead": st.column_config.TextColumn("Nome do Lead", width="medium"),
+            "Consultor": st.column_config.TextColumn("Consultor", width="small"),
+            "Cidade": st.column_config.TextColumn("Cidade", width="small"),
+            "Campanha": st.column_config.TextColumn("Campanha", width="small"),
+            "Data_Registro": st.column_config.TextColumn("Data", disabled=True, width="small")
         }
         
-        # Mostra Tabela
         df_editado = st.data_editor(
             df_view if filtro_marca != "TODAS" else df_ativos,
-            column_config=col_config,
+            column_config=col_conf,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             key="editor_ativos"
         )
         
-        col_btn, _ = st.columns([1, 4])
-        if col_btn.button("⚡ Processar Alterações", type="primary"):
-            with st.spinner("Atualizando..."):
-                # Separa grupos
-                prorrogados = df_editado[df_editado['Ação'] == 'Prorrogar'].copy()
-                desistentes = df_editado[df_editado['Ação'] == 'Desistência'].copy()
-                mantidos_editados = df_editado[df_editado['Ação'] == 'Manter'].copy()
+        if st.button("⚡ Processar Alterações", type="primary"):
+            with st.spinner("Processando..."):
+                prorrogados = df_editado[df_editado['Ação'] == 'Prorrogar']
+                desistentes = df_editado[df_editado['Ação'] == 'Desistência']
+                mantidos = df_editado[df_editado['Ação'] == 'Manter']
                 
-                cols_save = COLUNAS_OBRIGATORIAS
-                
-                # Reconstrução dos Ativos
+                # Salvar Ativos (Concatenando com o que estava oculto pelo filtro)
                 if filtro_marca != "TODAS":
-                    df_outras_marcas = df_ativos[df_ativos['Marca'] != filtro_marca]
-                    df_final_ativos = pd.concat([df_outras_marcas, mantidos_editados[cols_save]])
+                    ocultos = df_ativos[df_ativos['Marca'] != filtro_marca]
+                    df_final = pd.concat([ocultos, mantidos[COLUNAS_PADRAO]])
                 else:
-                    df_final_ativos = mantidos_editados[cols_save]
+                    df_final = mantidos[COLUNAS_PADRAO]
+                salvar_full("previsao_ativa", df_final)
                 
-                salvar_full("previsao_ativa", df_final_ativos)
-                
-                # Prorrogar
+                # Salvar Prorrogações
                 if not prorrogados.empty:
-                    df_prorrog_atual = carregar_aba("prorrogacao")
-                    prorrogados['Data_Movimento'] = datetime.now().strftime("%d/%m/%Y")
-                    # Garante que df_prorrog_atual tem as colunas certas antes do concat
-                    if df_prorrog_atual.empty: df_prorrog_atual = pd.DataFrame(columns=cols_save + ['Data_Movimento'])
-                    
-                    df_novo_prorrog = pd.concat([df_prorrog_atual, prorrogados[cols_save + ['Data_Movimento']]])
-                    salvar_full("prorrogacao", df_novo_prorrog)
-                    
-                # Desistir
+                    df_p = carregar_aba("prorrogacao")
+                    prorrogados = prorrogados.assign(Data_Movimento=datetime.now().strftime("%d/%m/%Y"))
+                    cols_p = COLUNAS_PADRAO + ['Data_Movimento']
+                    df_p_novo = pd.concat([df_p, prorrogados[cols_p]]) if not df_p.empty else prorrogados[cols_p]
+                    salvar_full("prorrogacao", df_p_novo)
+
+                # Salvar Desistências
                 if not desistentes.empty:
-                    df_desist_atual = carregar_aba("desistencia")
-                    desistentes['Data_Movimento'] = datetime.now().strftime("%d/%m/%Y")
-                    if df_desist_atual.empty: df_desist_atual = pd.DataFrame(columns=cols_save + ['Data_Movimento'])
-                    
-                    df_novo_desist = pd.concat([df_desist_atual, desistentes[cols_save + ['Data_Movimento']]])
-                    salvar_full("desistencia", df_novo_desist)
-                
+                    df_d = carregar_aba("desistencia")
+                    desistentes = desistentes.assign(Data_Movimento=datetime.now().strftime("%d/%m/%Y"))
+                    cols_d = COLUNAS_PADRAO + ['Data_Movimento']
+                    df_d_novo = pd.concat([df_d, desistentes[cols_d]]) if not df_d.empty else desistentes[cols_d]
+                    salvar_full("desistencia", df_d_novo)
+
                 st.success("Atualizado!")
                 st.rerun()
     else:
-        st.warning("Nenhuma previsão ativa. Cadastre na barra lateral.")
+        st.info("Sua lista de previsão está vazia. Comece cadastrando na barra lateral!")
 
 # --- TAB 2: PRORROGAÇÕES ---
 with tab2:
     df_view_p = filtrar(df_prorrog)
+    total_prorrog = df_view_p['Valor'].sum() if not df_view_p.empty else 0.0
     
-    st.markdown("### 🧊 Leads em Stand-by")
+    # KPI FINANCEIRO PRORROGAÇÃO
+    st.markdown(f'<div class="kpi-card" style="border-color: #fbbf24;"><div class="kpi-lbl">Total em Stand-by</div><div class="kpi-val-wait">R$ {total_prorrog:,.2f}</div></div>', unsafe_allow_html=True)
+    st.write("")
+    
     if not df_view_p.empty:
-        df_view_p['Retornar'] = False
+        df_view_p['Resgatar'] = False
         
-        edit_prorrog = st.data_editor(
-            df_view_p,
-            column_config={
-                "Retornar": st.column_config.CheckboxColumn("Voltar para Previsão?", default=False),
-                "Valor": st.column_config.NumberColumn(format="R$ %.2f")
-            },
-            disabled=COLUNAS_OBRIGATORIAS + ["Data_Movimento"],
+        col_conf_p = {
+            "Resgatar": st.column_config.CheckboxColumn("Voltar p/ Ativo?", default=False),
+            "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Data_Movimento": st.column_config.TextColumn("Data Prorrogação", width="small")
+        }
+        
+        ed_p = st.data_editor(
+            df_view_p, 
+            column_config=col_conf_p, 
+            disabled=COLUNAS_PADRAO + ["Data_Movimento"], 
             hide_index=True,
-            key="editor_prorrog"
+            use_container_width=True
         )
         
         if st.button("🔄 Restaurar Selecionados"):
-            recuperar = edit_prorrog[edit_prorrog['Retornar'] == True]
-            
-            if not recuperar.empty:
-                df_ativos_atual = carregar_aba("previsao_ativa")
-                df_ativos_novo = pd.concat([df_ativos_atual, recuperar[COLUNAS_OBRIGATORIAS]])
-                salvar_full("previsao_ativa", df_ativos_novo)
+            recup = ed_p[ed_p['Resgatar']==True]
+            if not recup.empty:
+                df_a = carregar_aba("previsao_ativa")
+                salvar_full("previsao_ativa", pd.concat([df_a, recup[COLUNAS_PADRAO]]))
                 
-                # Remove de Prorrogação
-                ficaram = edit_prorrog[edit_prorrog['Retornar'] == False]
+                restantes = ed_p[ed_p['Resgatar']==False]
                 if filtro_marca != "TODAS":
-                     outras = df_prorrog[df_prorrog['Marca'] != filtro_marca]
-                     novo_prorrog = pd.concat([outras, ficaram]).drop(columns=['Retornar'])
+                    outros = df_prorrog[df_prorrog['Marca'] != filtro_marca]
+                    final = pd.concat([outros, restantes]).drop(columns=['Resgatar'])
                 else:
-                     novo_prorrog = ficaram.drop(columns=['Retornar'])
-                
-                salvar_full("prorrogacao", novo_prorrog)
-                st.success("Leads recuperados!")
+                    final = restantes.drop(columns=['Resgatar'])
+                salvar_full("prorrogacao", final)
                 st.rerun()
-    else:
-        st.info("Nenhuma prorrogação.")
+    else: st.info("Nenhuma prorrogação registrada.")
 
 # --- TAB 3: DESISTÊNCIAS ---
 with tab3:
     df_view_d = filtrar(df_desist)
+    total_lost = df_view_d['Valor'].sum() if not df_view_d.empty else 0.0
     
-    st.markdown("### 💀 Cemitério de Leads")
+    # KPI FINANCEIRO DESISTÊNCIA
+    st.markdown(f'<div class="kpi-card" style="border-color: #f87171;"><div class="kpi-lbl">Total Perdido</div><div class="kpi-val-loss">R$ {total_lost:,.2f}</div></div>', unsafe_allow_html=True)
+    st.write("")
+    
     if not df_view_d.empty:
-        df_view_d['Retornar'] = False
+        df_view_d['Recuperar'] = False
         
-        edit_desist = st.data_editor(
-            df_view_d,
-            column_config={
-                "Retornar": st.column_config.CheckboxColumn("Recuperar?", default=False),
-                "Valor": st.column_config.NumberColumn(format="R$ %.2f")
-            },
-            disabled=COLUNAS_OBRIGATORIAS + ["Data_Movimento"],
+        col_conf_d = {
+            "Recuperar": st.column_config.CheckboxColumn("Tentar de Novo?", default=False),
+            "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Data_Movimento": st.column_config.TextColumn("Data Perda", width="small")
+        }
+        
+        ed_d = st.data_editor(
+            df_view_d, 
+            column_config=col_conf_d, 
+            disabled=COLUNAS_PADRAO + ["Data_Movimento"], 
             hide_index=True,
-            key="editor_desist"
+            use_container_width=True
         )
         
-        if st.button("♻️ Resgatar Lead"):
-            recuperar_d = edit_desist[edit_desist['Retornar'] == True]
-            
-            if not recuperar_d.empty:
-                df_ativos_atual = carregar_aba("previsao_ativa")
-                df_ativos_novo = pd.concat([df_ativos_atual, recuperar_d[COLUNAS_OBRIGATORIAS]])
-                salvar_full("previsao_ativa", df_ativos_novo)
+        if st.button("♻️ Resgatar Leads"):
+            recup = ed_d[ed_d['Recuperar']==True]
+            if not recup.empty:
+                df_a = carregar_aba("previsao_ativa")
+                salvar_full("previsao_ativa", pd.concat([df_a, recup[COLUNAS_PADRAO]]))
                 
-                ficaram_d = edit_desist[edit_desist['Retornar'] == False]
+                restantes = ed_d[ed_d['Recuperar']==False]
                 if filtro_marca != "TODAS":
-                     outras_d = df_desist[df_desist['Marca'] != filtro_marca]
-                     novo_desist = pd.concat([outras_d, ficaram_d]).drop(columns=['Retornar'])
+                    outros = df_desist[df_desist['Marca'] != filtro_marca]
+                    final = pd.concat([outros, restantes]).drop(columns=['Recuperar'])
                 else:
-                     novo_desist = ficaram_d.drop(columns=['Retornar'])
-                
-                salvar_full("desistencia", novo_desist)
-                st.success("Leads resgatados!")
+                    final = restantes.drop(columns=['Recuperar'])
+                salvar_full("desistencia", final)
                 st.rerun()
-    else:
-        st.info("Nenhuma desistência.")
+    else: st.info("Nenhuma desistência registrada.")
