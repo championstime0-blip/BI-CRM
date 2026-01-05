@@ -71,7 +71,7 @@ st.markdown("""
 # =========================
 MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
 MOTIVOS_PERDA_MESTRADOS = [
-    "Sem Contato", "Sem Resposta", "Sem Capital", "Desistiu do Negócio", "Outro Investimento", 
+    "Sem Resposta", "Sem Capital", "Desistiu do Negócio", "Outro Investimento", 
     "Fora de Perfil", "Não tem interesse em franquia", "Lead Duplicado", 
     "Dados Inválidos", "Região Indisponível", "Sócio não aprovou"
 ]
@@ -204,9 +204,9 @@ def render_dashboard(df, marca):
         c_fun1, c_fun2 = st.columns(2)
         reuniao_realizada_plus = len(df[df["Etapa"].isin(["Reunião Realizada", "negociação", "em aprovação", "faturado"])])
         
-        # AJUSTE LÓGICA: Perdidos em 'Aguardando Resposta' por 'sem contato'
+        # AJUSTE LÓGICA: Perdidos na etapa 'Aguardando Resposta' pelo motivo 'Sem Resposta'
         leads_sem_contato_count = len(perdidos[(perdidos["Etapa"] == "Aguardando Resposta") & 
-                                        (perdidos["Motivo de Perda"].str.lower().str.contains("sem contato", na=False))])
+                                        (perdidos["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))])
         
         with c_fun1: card("Reunião Realizada (+)", reuniao_realizada_plus)
         with c_fun2: card("Leads sem contato", leads_sem_contato_count)
@@ -214,17 +214,15 @@ def render_dashboard(df, marca):
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
     
-    # LÓGICA ATUALIZADA: TODOS OS MOTIVOS COM PERCENTUAL E DESTAQUE DE COR
     df_loss = perdidos["Motivo de Perda"].value_counts().reindex(MOTIVOS_PERDA_MESTRADOS, fill_value=0).reset_index()
     df_loss.columns = ["Motivo", "Qtd"]
     df_loss = df_loss.sort_values(by="Qtd", ascending=False)
     
-    # Cálculo do percentual para o gráfico de perdas
     df_loss["Perc"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
     df_loss["Label_Text"] = df_loss.apply(lambda x: f"{int(x['Qtd'])} ({x['Perc']}%)", axis=1)
     
-    # AJUSTE: Cor Ciano para "sem contato", Vermelho para os outros
-    df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#22d3ee' if 'sem contato' in str(x).lower() else '#ef4444')
+    # AJUSTE COR: Ciano para "Sem Resposta", Vermelho para os demais
+    df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#22d3ee' if 'sem resposta' in str(x).lower() else '#ef4444')
     
     fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Label_Text", orientation="h",
                       color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
