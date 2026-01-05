@@ -14,34 +14,50 @@ import io
 st.set_page_config(page_title="BI CRM Expansão - Histórico", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS
+# ESTILIZAÇÃO CSS (IDENTIDADE HOME.PY)
 # =========================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@500;700&display=swap');
 .stApp { background-color: #0b0f1a; color: #e0e0e0; }
 .futuristic-title {
-    font-family: 'Orbitron', sans-serif; font-size: 42px; font-weight: 900; text-transform: uppercase;
+    font-family: 'Orbitron', sans-serif; font-size: 56px; font-weight: 900; text-transform: uppercase;
     background: linear-gradient(90deg, #22d3ee 0%, #818cf8 50%, #c084fc 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    letter-spacing: 2px;
+    letter-spacing: 3px; margin-bottom: 10px; text-shadow: 0 0 30px rgba(34, 211, 238, 0.3);
+}
+.futuristic-sub {
+    font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; text-transform: uppercase;
+    color: #e2e8f0; letter-spacing: 2px; border-bottom: 1px solid #1e293b;
+    padding-bottom: 8px; margin-top: 30px; margin-bottom: 20px; display: flex; align-items: center;
 }
 .profile-header {
     background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
-    border-left: 5px solid #6366f1; border-radius: 8px; padding: 20px;
-    margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between;
+    border-left: 5px solid #6366f1; border-radius: 8px; padding: 20px 30px;
+    margin-bottom: 15px; margin-top: 10px; display: flex; align-items: center; justify-content: space-between;
 }
+.profile-group { display: flex; flex-direction: column; }
+.profile-label { color: #94a3b8; font-family: 'Rajdhani', sans-serif; font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+.profile-value { color: #f8fafc; font-size: 24px; font-weight: 600; font-family: 'Rajdhani', sans-serif; }
 .card {
-    background: rgba(30, 41, 59, 0.5); padding: 20px; border-radius: 12px; border: 1px solid #1e293b; text-align: center;
+    background: linear-gradient(135deg, #111827, #020617);
+    padding: 24px; border-radius: 16px; border: 1px solid #1e293b; text-align: center;
 }
 .card-value {
-    font-family: 'Orbitron', sans-serif; font-size: 32px; font-weight: 700; color: #38bdf8;
+    font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700;
+    background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# CONEXÃO GOOGLE
+# CONSTANTES
+# =========================
+MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
+MOTIVOS_PERDA_MESTRADOS = ["Sem Resposta", "Sem Capital", "Desistiu do Negócio", "Outro Investimento", "Fora de Perfil", "Não tem interesse em franquia", "Lead Duplicado", "Dados Inválidos", "Região Indisponível", "Sócio não aprovou"]
+
+# =========================
+# FUNÇÕES DE CONEXÃO
 # =========================
 def conectar_google():
     try:
@@ -60,105 +76,95 @@ def get_historico():
         ws = sh.worksheet("db_snapshots")
         rows = ws.get_all_values()
         if len(rows) < 2: return pd.DataFrame()
-        
         df = pd.DataFrame(rows[1:], columns=rows[0])
+        # Limpa nomes de colunas para evitar erros de espaço
         df.columns = df.columns.str.strip()
         return df
     except: return pd.DataFrame()
 
-# =========================
-# MOTOR DE PROCESSAMENTO
-# =========================
-def load_csv(file):
-    raw = file.read().decode("latin-1", errors="ignore")
-    if raw.strip().startswith("sep="): raw = "\n".join(raw.splitlines()[1:])
-    sep = ";" if raw.count(";") > raw.count(",") else ","
-    return pd.read_csv(io.StringIO(raw), sep=sep, engine="python", on_bad_lines="skip")
-
-def processar(df):
-    df.columns = df.columns.str.strip()
-    df = df.loc[:, ~df.columns.duplicated()]
-    cols_map = {}
-    for c in df.columns:
-        c_lower = str(c).lower()
-        if "fonte" in c_lower and "utm" not in c_lower: cols_map[c] = "Fonte"
-        elif "etapa" in c_lower: cols_map[c] = "Etapa"
-        elif "motivo de perda" in c_lower: cols_map[c] = "Motivo de Perda"
-        elif "estado" in c_lower: cols_map[c] = "Estado"
-
-    df = df.rename(columns=cols_map)
-    
-    def status_func(row):
-        if str(row.get("Estado", "")).lower() == "perdida": return "Perdido"
-        etapa = str(row.get("Etapa", "")).lower()
-        if any(x in etapa for x in ["faturado", "ganho", "venda"]): return "Ganho"
-        return "Em Andamento" if str(row.get("Motivo de Perda", "")).strip().lower() in ["", "nan", "none", "nada", "0"] else "Perdido"
-        
-    df["Status"] = df.apply(status_func, axis=1)
-    return df
+def card(title, value):
+    st.markdown(f'<div class="card"><div class="profile-label">{title}</div><div class="card-value">{value}</div></div>', unsafe_allow_html=True)
 
 # =========================
-# DASHBOARD RENDERING
+# DASHBOARD RENDERING (BASEADO NO HOME.PY)
 # =========================
 def render_dashboard(df):
     total = len(df)
+    
+    def status_func(row):
+        estado_lower = str(row.get("Estado", "")).lower()
+        if "perdida" in estado_lower: return "Perdido"
+        etapa_lower = str(row.get("Etapa", "")).lower()
+        if any(x in etapa_lower for x in ["faturado", "ganho", "venda"]): return "Ganho"
+        motivo = str(row.get("Motivo de Perda", "")).strip().lower()
+        if motivo not in ["", "nan", "none", "-", "0", "nada", "n/a"]: return "Perdido"
+        return "Em Andamento"
+        
+    df["Status"] = df.apply(status_func, axis=1)
     perdidos = df[df["Status"] == "Perdido"]
     
     c1, c2 = st.columns(2)
-    with c1: st.markdown(f'<div class="card"><div>Leads</div><div class="card-value">{total}</div></div>', unsafe_allow_html=True)
-    with c2: st.markdown(f'<div class="card"><div>Perdidos</div><div class="card-value">{len(perdidos)}</div></div>', unsafe_allow_html=True)
-    
+    with c1: card("Leads no Histórico", total)
+    with c2: card("Perdidos Gravados", len(perdidos))
     st.divider()
-    if "Fonte" in df.columns:
-        df_f = df["Fonte"].value_counts().reset_index()
-        fig = px.pie(df_f, values=df_f.columns[1], names=df_f.columns[0], hole=0.6)
-        fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig, use_container_width=True)
+
+    col_mkt, col_funil = st.columns(2)
+    with col_mkt:
+        st.markdown('<div class="futuristic-sub">📡 FONTES DE AQUISIÇÃO</div>', unsafe_allow_html=True)
+        if "Fonte" in df.columns:
+            df_fonte = df["Fonte"].value_counts().reset_index()
+            fig_pie = px.pie(df_fonte, values=df_fonte.columns[1], names=df_fonte.columns[0], hole=0.6, color_discrete_sequence=px.colors.sequential.Cyan_r)
+            fig_pie.update_traces(textposition='inside', textinfo='label+value')
+            fig_pie.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+    with col_funil:
+        st.markdown('<div class="futuristic-sub">📉 ETAPAS DO FUNIL</div>', unsafe_allow_html=True)
+        if "Etapa" in df.columns:
+            df_etapa = df["Etapa"].value_counts().reset_index()
+            fig_bar = px.bar(df_etapa, y=df_etapa.columns[0], x=df_etapa.columns[1], orientation="h", color_discrete_sequence=['#38bdf8'])
+            fig_bar.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+    st.divider()
+    st.markdown('<div class="futuristic-sub">🚫 MOTIVOS DE PERDA REGISTRADOS</div>', unsafe_allow_html=True)
+    if not perdidos.empty:
+        df_loss = perdidos["Motivo de Perda"].value_counts().reset_index()
+        df_loss.columns = ["Motivo", "Qtd"]
+        df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#10b981' if 'sem resposta' in str(x).lower() else '#ef4444')
+        fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h", color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
+        fig_loss.update_layout(template="plotly_dark", showlegend=False, yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_loss, use_container_width=True)
 
 # =========================
 # APP MAIN
 # =========================
-st.markdown('<div class="futuristic-title">💠 CRM EXPANSÃO</div>', unsafe_allow_html=True)
+st.markdown('<div class="futuristic-title">📜 HISTÓRICO DE SNAPSHOTS</div>', unsafe_allow_html=True)
 
-modo = st.sidebar.radio("Selecione o Modo", ["Snapshot Atual (Upload)", "Visão Histórica (Salvos)"])
+df_hist = get_historico()
 
-if modo == "Snapshot Atual (Upload)":
-    marca_sel = st.sidebar.selectbox("Marca", ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"])
-    semana_sel = st.sidebar.selectbox("Semana Ref.", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
-    arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
-    
-    if arquivo:
-        df = processar(load_csv(arquivo))
-        render_dashboard(df)
+if not df_hist.empty:
+    # Verificação de segurança: a planilha precisa ter as colunas de controle para o filtro funcionar
+    if 'marca_ref' in df_hist.columns and 'semana_ref' in df_hist.columns:
+        st.sidebar.header("Filtros de Visão")
+        marcas_h = df_hist['marca_ref'].unique()
+        m_sel = st.sidebar.selectbox("Selecionar Marca", marcas_h)
         
-        if st.sidebar.button("🚀 SALVAR NO HISTÓRICO"):
-            client = conectar_google()
-            if client:
-                sh = client.open("BI_Historico")
-                ws = sh.worksheet("db_snapshots")
-                
-                df_save = df.copy()
-                df_save['snapshot_id'] = datetime.now().strftime("%Y%m%d_%H%M%S")
-                df_save['data_salvamento'] = datetime.now().strftime('%d/%m/%Y %H:%M')
-                df_save['semana_ref'] = semana_sel
-                df_save['marca_ref'] = marca_sel
-                
-                # --- CORREÇÃO DO CABEÇALHO AQUI ---
-                current_values = ws.get_all_values()
-                if not current_values:
-                    # Se a planilha estiver vazia, insere os nomes das colunas na primeira linha
-                    ws.append_row(df_save.columns.tolist())
-                
-                # Insere os dados abaixo do cabeçalho
-                ws.append_rows(df_save.astype(str).values.tolist())
-                st.sidebar.success("Snapshot e cabeçalhos salvos com sucesso!")
-
-else:
-    df_hist = get_historico()
-    if not df_hist.empty and 'marca_ref' in df_hist.columns:
-        m_sel = st.sidebar.selectbox("Filtrar Marca", df_hist['marca_ref'].unique())
-        s_sel = st.sidebar.selectbox("Filtrar Semana", df_hist[df_hist['marca_ref'] == m_sel]['semana_ref'].unique())
+        semanas_h = df_hist[df_hist['marca_ref'] == m_sel]['semana_ref'].unique()
+        s_sel = st.sidebar.selectbox("Selecionar Período", semanas_h)
+        
         df_view = df_hist[(df_hist['marca_ref'] == m_sel) & (df_hist['semana_ref'] == s_sel)]
+        
+        st.markdown(f"""
+        <div class="profile-header">
+            <div class="profile-group"><span class="profile-label">Marca Consultada</span><span class="profile-value">{m_sel}</span></div>
+            <div class="profile-divider"></div>
+            <div class="profile-group"><span class="profile-label">Referência</span><span class="profile-value">{s_sel}</span></div>
+        </div>""", unsafe_allow_html=True)
+        
         render_dashboard(df_view)
     else:
-        st.warning("Nenhum histórico com colunas válidas encontrado.")
+        st.error("A planilha existe mas não possui as colunas 'marca_ref' ou 'semana_ref'.")
+else:
+    st.warning("Nenhum dado histórico encontrado. Vá até a página principal para salvar o primeiro Snapshot.")
+    st.info("Nota: A primeira vez que você clicar em 'Salvar' na Home, o sistema criará os nomes das colunas automaticamente.")
