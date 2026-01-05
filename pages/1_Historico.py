@@ -13,7 +13,7 @@ from datetime import datetime
 st.set_page_config(page_title="Histórico | Time Machine", layout="wide")
 
 # =========================
-# ESTILIZAÇÃO CSS (IDENTICA A HOME)
+# ESTILIZAÇÃO CSS (CÓPIA EXATA DA HOME)
 # =========================
 st.markdown("""
 <style>
@@ -31,6 +31,19 @@ st.markdown("""
     padding-bottom: 8px; margin-top: 30px; margin-bottom: 20px; display: flex; align-items: center;
 }
 .sub-icon { margin-right: 12px; font-size: 24px; color: #22d3ee; text-shadow: 0 0 10px rgba(34, 211, 238, 0.6); }
+.profile-header {
+    background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
+    border-left: 5px solid #6366f1; border-radius: 8px; padding: 20px 30px;
+    margin-bottom: 15px; margin-top: 10px; display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+.profile-group { display: flex; flex-direction: column; }
+.profile-label { color: #94a3b8; font-family: 'Rajdhani', sans-serif; font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+.profile-value { color: #f8fafc; font-size: 24px; font-weight: 600; font-family: 'Rajdhani', sans-serif; }
+.profile-divider { width: 1px; height: 40px; background-color: #334155; margin: 0 20px; }
+.date-card { background: rgba(15, 23, 42, 0.4); border: 1px solid #334155; border-radius: 12px; padding: 12px; text-align: center; margin-bottom: 30px; }
+.date-label { font-family: 'Rajdhani', sans-serif; font-size: 13px; text-transform: uppercase; letter-spacing: 2px; color: #64748b; margin-bottom: 2px; }
+.date-value { font-family: 'Orbitron', sans-serif; font-size: 18px; color: #94a3b8; letter-spacing: 1px; }
 .card {
     background: linear-gradient(135deg, #111827, #020617);
     padding: 24px; border-radius: 16px; border: 1px solid #1e293b; text-align: center;
@@ -82,7 +95,7 @@ def conectar_google():
         return None
 
 # =========================
-# FUNÇÕES DE UI E PROCESSAMENTO
+# UTILS VISUAIS
 # =========================
 ETAPAS_FUNIL = ["Sem contato", "Aguardando Resposta", "Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
 
@@ -93,7 +106,7 @@ def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
 
 def processar_snapshot(df):
-    # Recalcula Status caso não tenha sido salvo ou precise de refresh
+    # Recalcula Status e Data
     def status(row):
         etapa_lower = str(row["Etapa"]).lower() if "Etapa" in row else ""
         motivo = str(row["Motivo de Perda"]).strip().lower() if "Motivo de Perda" in row else ""
@@ -104,31 +117,61 @@ def processar_snapshot(df):
     if "Status" not in df.columns:
         df["Status"] = df.apply(status, axis=1)
         
-    # Tratamento de Strings e Numeros
+    # Converter Data de Criação para DateTime real (para o recorte temporal)
+    if "Data de Criação" in df.columns:
+        df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], errors='coerce')
+        
     if "Fonte" in df.columns:
         df["Fonte"] = df["Fonte"].fillna("Desconhecido").astype(str)
         
     return df
 
 # =========================
-# DASHBOARD RENDER (CÓPIA DA HOME PARA VISUAL IDÊNTICO)
+# RENDERIZADOR COMPLETO (IDÊNTICO À HOME)
 # =========================
-def render_dashboard(df):
+def render_dashboard_completo(df):
+    # 1. HEADER (RESPONSÁVEL E EQUIPE)
+    resp = df["Responsável"].mode()[0] if "Responsável" in df.columns and not df["Responsável"].empty else "N/A"
+    
+    equipe = "N/A"
+    if "Equipe" in df.columns and not df["Equipe"].empty:
+         equipe_raw = str(df["Equipe"].mode()[0])
+         if "Prepara" in equipe_raw: equipe = "Expansão Prepara"
+         elif "Microlins" in equipe_raw: equipe = "Expansão Microlins"
+         elif "Ensina" in equipe_raw: equipe = "Expansão Ensina Mais"
+         else: equipe = equipe_raw
+    elif "marca_ref" in df.columns:
+         equipe = f"Expansão {df['marca_ref'].iloc[0]}"
+
+    st.markdown(f"""
+    <div class="profile-header">
+        <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp}</span></div>
+        <div class="profile-divider"></div>
+        <div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe}</span></div>
+    </div>""", unsafe_allow_html=True)
+    
+    # 2. DATA CARD (RECORTE TEMPORAL)
+    if "Data de Criação" in df.columns and pd.api.types.is_datetime64_any_dtype(df["Data de Criação"]):
+        d_min = df["Data de Criação"].min()
+        d_max = df["Data de Criação"].max()
+        if pd.notnull(d_min) and pd.notnull(d_max):
+            d_str = f"{d_min.strftime('%d/%m/%Y')} ➔ {d_max.strftime('%d/%m/%Y')}"
+            st.markdown(f'<div class="date-card"><div class="date-label">📅 Recorte Temporal do Arquivo</div><div class="date-value">{d_str}</div></div>', unsafe_allow_html=True)
+
+    # 3. KPIs TOPO
     total = len(df)
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
     
-    # KPIs Topo
-    c1, c2, c3 = st.columns(3)
-    with c1: card("Total no Snapshot", total)
-    with c2: card("Em Andamento", len(em_andamento))
-    with c3: card("Perdidos", len(perdidos))
-    
+    c1, c2 = st.columns(2)
+    with c1: card("Leads Totais", total)
+    with c2: card("Leads em Andamento", len(em_andamento))
     st.divider()
 
+    # 4. GRÁFICOS CENTRAIS
     col_mkt, col_funil = st.columns(2)
     
-    # 1. MKT (Gráfico de Pizza e Top 3)
+    # Marketing
     with col_mkt:
         subheader_futurista("📡", "MARKETING & FONTES")
         if "Fonte" in df.columns:
@@ -140,8 +183,7 @@ def render_dashboard(df):
             fig_pie.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # Lista TOP 3 estilizada
-            st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🏆</span>TOP 3 CANAIS</div>', unsafe_allow_html=True)
+            st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🏆</span>TOP 3 CANAIS DE AQUISIÇÃO</div>', unsafe_allow_html=True)
             top3 = df_fonte.head(3)
             max_val = top3['Qtd'].max() if not top3.empty else 1
             html = '<div class="top-source-container">'
@@ -162,14 +204,14 @@ def render_dashboard(df):
         else:
             st.warning("Dados de Fonte indisponíveis.")
 
-    # 2. Funil
+    # Funil
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL")
         if "Etapa" in df.columns:
             df_funil = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
             df_funil["Percentual"] = (df_funil["Qtd"] / total * 100).round(1) if total > 0 else 0
             
-            # Cálculo Taxa de Avanço
+            # Taxa Avanço
             avanco_list = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
             df['Etapa_Clean'] = df['Etapa'].str.strip()
             qtd_avanco = len(df[df['Etapa_Clean'].isin(avanco_list)])
@@ -189,16 +231,21 @@ def render_dashboard(df):
             
             st.markdown(f'''
             <div class="funnel-card">
-                <div class="funnel-label">🚀 Taxa de Avanço Real</div>
+                <div class="funnel-label">🚀 Taxa de Avanço Real de Funil</div>
                 <div class="funnel-percent">{taxa_avanco:.1f}%</div>
                 <div class="funnel-sub">Leads Qualificados+ / (Total - Sem Resposta)</div>
             </div>''', unsafe_allow_html=True)
         else:
             st.warning("Dados de Etapa indisponíveis.")
 
+    # 5. DETALHE DAS PERDAS
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS")
+    k1, k2 = st.columns(2)
+    with k1: card("Total Perdido", len(perdidos))
+    with k2: card("Perda: Aguardando s/ Resp.", len(perda_especifica) if "Motivo de Perda" in df.columns else 0)
     
+    st.write("")
     if not perdidos.empty and "Etapa" in perdidos.columns:
         df_loss = perdidos.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
         df_loss["Percentual"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
@@ -213,8 +260,7 @@ def render_dashboard(df):
 # =========================
 st.markdown('<div class="futuristic-title">🕰️ Máquina do Tempo</div>', unsafe_allow_html=True)
 
-# 1. CARREGAR METADADOS DO BANCO
-with st.spinner("Conectando ao banco de dados..."):
+with st.spinner("Sincronizando com o banco de dados..."):
     client = conectar_google()
     df_db = pd.DataFrame()
     
@@ -227,87 +273,74 @@ with st.spinner("Conectando ao banco de dados..."):
             if len(dados) > 1 and 'snapshot_id' in dados[0]:
                 df_db = pd.DataFrame(dados[1:], columns=dados[0])
             else:
-                st.warning("⚠️ Banco vazio. Vá na Home e salve um arquivo.")
+                st.warning("⚠️ Banco de dados vazio. Salve um arquivo na Home.")
                 st.stop()
         except Exception as e:
             st.error(f"Erro: {e}")
             st.stop()
 
-# 2. SISTEMA DE FILTRAGEM ROBUSTA (CASCATA)
+# =========================
+# SISTEMA DE FILTRO EM CASCATA (DRILL-DOWN)
+# =========================
 if not df_db.empty:
     st.sidebar.header("🗂️ Filtros de Busca")
     
-    # Preparação de Dados para Filtro (Extraindo Ano/Mes)
-    # Formato esperado data_salvamento: "04/01/2026 20:30"
+    # 1. Preparar Colunas Auxiliares para Filtro
     df_db['data_dt'] = pd.to_datetime(df_db['data_salvamento'], dayfirst=True, errors='coerce')
-    df_db['Ano'] = df_db['data_dt'].dt.year
-    df_db['Mes'] = df_db['data_dt'].dt.month_name()
+    df_db['Ano_Filtro'] = df_db['data_dt'].dt.year.fillna(0).astype(int)
+    # Mes em Português para ficar bonito
+    meses_pt = {1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho", 7:"Julho", 8:"Agosto", 9:"Setembro", 10:"Outubro", 11:"Novembro", 12:"Dezembro"}
+    df_db['Mes_Filtro'] = df_db['data_dt'].dt.month.map(meses_pt)
     
-    # Garantir que colunas de filtro existam
     if 'marca_ref' not in df_db.columns: df_db['marca_ref'] = 'Geral'
-    if 'semana_ref' not in df_db.columns: df_db['semana_ref'] = 'N/A'
     
-    # --- FILTRO 1: MARCA ---
+    # --- NIVEL 1: MARCA ---
     marcas_disp = sorted(df_db['marca_ref'].unique())
-    f_marca = st.sidebar.selectbox("1. Selecione a Marca", marcas_disp)
-    
+    f_marca = st.sidebar.selectbox("1. Marca", marcas_disp)
     df_f1 = df_db[df_db['marca_ref'] == f_marca]
     
-    # --- FILTRO 2: ANO ---
-    anos_disp = sorted(df_f1['Ano'].dropna().unique(), reverse=True)
+    # --- NIVEL 2: ANO ---
+    anos_disp = sorted(df_f1['Ano_Filtro'].unique(), reverse=True)
     if len(anos_disp) > 0:
-        f_ano = st.sidebar.selectbox("2. Selecione o Ano", anos_disp)
-        df_f2 = df_f1[df_f1['Ano'] == f_ano]
+        f_ano = st.sidebar.selectbox("2. Ano", anos_disp)
+        df_f2 = df_f1[df_f1['Ano_Filtro'] == f_ano]
     else:
-        st.sidebar.warning("Sem dados de ano.")
         df_f2 = df_f1
-        
-    # --- FILTRO 3: MÊS ---
-    meses_disp = df_f2['Mes'].unique()
+
+    # --- NIVEL 3: MÊS ---
+    meses_disp = df_f2['Mes_Filtro'].unique()
     if len(meses_disp) > 0:
-        f_mes = st.sidebar.selectbox("3. Selecione o Mês", meses_disp)
-        df_f3 = df_f2[df_f2['Mes'] == f_mes]
+        f_mes = st.sidebar.selectbox("3. Mês", meses_disp)
+        df_f3 = df_f2[df_f2['Mes_Filtro'] == f_mes]
     else:
         df_f3 = df_f2
-        
-    # --- FILTRO 4: VERSÃO/ARQUIVO (SNAPSHOT FINAL) ---
-    # Mostra a semana e a hora exata para diferenciar salvamentos
+
+    # --- NIVEL 4: SEMANA (ARQUIVO FINAL) ---
     if not df_f3.empty:
-        df_f3['Label_Select'] = df_f3['semana_ref'] + " | Salvo em: " + df_f3['data_salvamento']
+        # Cria label bonito: "Semana 1 (Salvo em 04/01 às 14:00)"
+        df_f3['Label_Select'] = df_f3['semana_ref'] + " | " + df_f3['data_salvamento']
         
-        # Agrupamos por ID para não repetir linhas no selectbox (uma opção por snapshot)
-        opcoes_finais = df_f3[['snapshot_id', 'Label_Select']].drop_duplicates().sort_values('snapshot_id', ascending=False)
+        # Remove duplicatas de ID (mostra apenas uma opção por snapshot)
+        opcoes = df_f3[['snapshot_id', 'Label_Select']].drop_duplicates().sort_values('snapshot_id', ascending=False)
         
-        f_snapshot = st.sidebar.selectbox("4. Escolha o Arquivo", options=opcoes_finais['Label_Select'])
+        f_arquivo = st.sidebar.selectbox("4. Arquivo (Snapshot)", opcoes['Label_Select'])
         
-        # --- CARREGAR DADOS ---
-        if f_snapshot:
-            id_escolhido = opcoes_finais[opcoes_finais['Label_Select'] == f_snapshot]['snapshot_id'].values[0]
+        # --- CARREGAR E RENDERIZAR ---
+        if f_arquivo:
+            id_snap = opcoes[opcoes['Label_Select'] == f_arquivo]['snapshot_id'].values[0]
             
-            # Filtra e Copia
-            df_recuperado = df_db[df_db['snapshot_id'] == id_escolhido].copy()
-            
-            # Limpeza
-            cols_tec = ['snapshot_id', 'data_salvamento', 'semana_ref', 'marca_ref', 'Ano', 'Mes', 'Label_Select', 'data_dt']
+            # Filtra e Limpa
+            df_recuperado = df_db[df_db['snapshot_id'] == id_snap].copy()
+            cols_tec = ['snapshot_id', 'data_salvamento', 'semana_ref', 'marca_ref', 'Ano_Filtro', 'Mes_Filtro', 'Label_Select', 'data_dt']
             df_visual = df_recuperado.drop(columns=[c for c in cols_tec if c in df_recuperado.columns])
             
-            # Processamento Final
+            # Processa e Renderiza
             df_final = processar_snapshot(df_visual)
             
             st.divider()
+            render_dashboard_completo(df_final)
             
-            # Cabeçalho Informativo
-            st.markdown(f"""
-            <div style="background: rgba(34, 211, 238, 0.1); padding: 15px; border-radius: 10px; border-left: 4px solid #22d3ee; margin-bottom: 20px;">
-                <h3 style="margin:0; font-family:'Rajdhani'; color: #22d3ee;">ARQUIVO CARREGADO: {f_snapshot}</h3>
-                <p style="margin:0; color: #94a3b8;">Visualizando dados estáticos do passado.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # --- RENDERIZA O DASHBOARD COMPLETO ---
-            render_dashboard(df_final)
-            
-            with st.expander("📂 Ver Tabela de Dados Brutos"):
+            with st.expander("🔍 Ver Dados Brutos"):
                 st.dataframe(df_final)
     else:
-        st.sidebar.warning("Nenhum arquivo encontrado para esses filtros.")
+        st.sidebar.warning("Nenhum arquivo encontrado para esta combinação.")
