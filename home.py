@@ -217,6 +217,7 @@ def render_dashboard(df, marca):
     # 2. Funil (Gráfico de Barras e Taxa)
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL")
+        # Funil de Conversão segue a ordem fixa
         df_funil = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
         df_funil["Percentual"] = (df_funil["Qtd"] / total * 100).round(1) if total > 0 else 0
         
@@ -243,6 +244,7 @@ def render_dashboard(df, marca):
             <div class="funnel-sub">Leads Qualificados+ / (Total - Sem Resposta)</div>
         </div>''', unsafe_allow_html=True)
 
+    # 3. DETALHE DAS PERDAS (CORRIGIDO: MOSTRA A REALIDADE DE ONDE PERDEU)
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS")
     k1, k2 = st.columns(2)
@@ -251,12 +253,31 @@ def render_dashboard(df, marca):
     
     st.write("")
     if not perdidos.empty:
-        df_loss = perdidos.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
-        df_loss["Percentual"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
-        df_loss["Label"] = df_loss.apply(lambda x: f"{int(x['Qtd'])}<br>({x['Percentual']}%)", axis=1)
+        # CORREÇÃO: Usamos value_counts para ver apenas onde TEM perda, ordenado do maior pro menor
+        df_loss = perdidos["Etapa"].value_counts().reset_index()
+        df_loss.columns = ["Etapa", "Qtd"]
         
-        fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", text="Label", color="Qtd", color_continuous_scale="Blues")
-        fig_loss.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
+        df_loss["Percentual"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
+        df_loss["Label"] = df_loss.apply(lambda x: f"{x['Qtd']} ({x['Percentual']}%)", axis=1)
+        
+        # Gráfico em Vermelho para diferenciar do Funil de Conversão
+        fig_loss = px.bar(
+            df_loss, 
+            x="Qtd", 
+            y="Etapa", 
+            text="Label", 
+            orientation="h",
+            color="Qtd", 
+            color_continuous_scale="Reds",
+            title="Ranking de Perdas por Etapa"
+        )
+        fig_loss.update_layout(
+            template="plotly_dark", 
+            plot_bgcolor="rgba(0,0,0,0)", 
+            paper_bgcolor="rgba(0,0,0,0)", 
+            showlegend=False,
+            yaxis=dict(autorange="reversed") # Inverte para mostrar a maior perda no topo
+        )
         st.plotly_chart(fig_loss, use_container_width=True)
 
     return {
