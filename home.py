@@ -140,14 +140,11 @@ def render_dashboard(df, marca):
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL (ACUMULADO)")
         
-        # Ordem solicitada: Do início ao fim
         ordem_funil = ["Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "negociação", "em aprovação", "faturado"]
-        
         funil_labels = ["TOTAL DE LEADS"]
         funil_values = [total]
         
         for etapa in ordem_funil:
-            # Lógica: É esta etapa ou qualquer uma das etapas seguintes na jornada
             idx = ordem_funil.index(etapa)
             etapas_alvo = ordem_funil[idx:]
             qtd = len(df[df["Etapa"].isin(etapas_alvo)])
@@ -158,24 +155,23 @@ def render_dashboard(df, marca):
         df_plot["Percentual"] = (df_plot["Quantidade"] / total * 100).round(1)
         df_plot["Label"] = df_plot.apply(lambda x: f"{int(x['Quantidade'])} ({x['Percentual']}%)", axis=1)
 
-        # Palos Horizontais
         fig_funil = px.bar(df_plot, y="Etapa", x="Quantidade", text="Label", orientation="h",
                           color="Quantidade", color_continuous_scale="Blues")
         fig_funil.update_layout(
             template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)",
-            yaxis={'categoryorder':'array', 'categoryarray':funil_labels[::-1]} # Inverte array para o total ficar no topo
+            yaxis={'categoryorder':'array', 'categoryarray':funil_labels[::-1]}
         )
         st.plotly_chart(fig_funil, use_container_width=True)
         
-        # CARDS EMBAIXO DO FUNIL
         c_fun1, c_fun2 = st.columns(2)
         reuniao_realizada_plus = len(df[df["Etapa"].isin(["Reunião Realizada", "negociação", "em aprovação", "faturado"])])
         
-        # Ajuste Leads sem contato (Etapa Aguardando Resposta ou Sem Contato)
-        leads_sem_contato = len(df[(df["Etapa"].isin(["Aguardando Resposta", "Sem contato"])) & (df["Status"] == "Em Andamento")])
+        # AJUSTE: Leads sem contato (Perdidos em 'Aguardando Resposta' por 'sem resposta')
+        leads_sem_contato_count = len(perdidos[(perdidos["Etapa"] == "Aguardando Resposta") & 
+                                        (perdidos["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))])
         
         with c_fun1: card("Reunião Realizada (+)", reuniao_realizada_plus)
-        with c_fun2: card("Leads sem contato", leads_sem_contato)
+        with c_fun2: card("Leads sem contato", leads_sem_contato_count)
 
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
@@ -184,25 +180,31 @@ def render_dashboard(df, marca):
         perdas_validas = perdidos[~perdidos["Motivo de Perda"].isin(["", "nan", "N/A", "None"])]
         df_loss = perdas_validas["Motivo de Perda"].value_counts().reset_index()
         df_loss.columns = ["Motivo", "Qtd"]
-        df_loss = df_loss.head(15)
         
-        # Cor Azul para "sem resposta", Vermelho para os outros
-        df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#22d3ee' if 'resposta' in str(x).lower() else '#ef4444')
+        # Ordenação Decrescente (Maior para o menor)
+        df_loss = df_loss.sort_values(by="Qtd", ascending=False).head(15)
+        
+        # AJUSTE: Cor Verde para "sem resposta" na etapa "Aguardando Resposta", Vermelho para os outros
+        # Precisamos identificar no dataframe de perdas o motivo exato
+        df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#4ade80' if 'sem resposta' in str(x).lower() else '#ef4444')
         
         fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h",
                           color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
         
-        fig_loss.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(autorange="reversed"))
+        fig_loss.update_layout(
+            template="plotly_dark", 
+            showlegend=False, 
+            paper_bgcolor="rgba(0,0,0,0)", 
+            yaxis=dict(autorange="reversed") # Mantém o maior no topo
+        )
         st.plotly_chart(fig_loss, use_container_width=True)
         
-        # Card de Perdas corrigido
-        perda_sem_resp = len(perdidos[perdidos["Motivo de Perda"].str.lower().str.contains("resposta", na=False)])
         k1, k2 = st.columns(2)
         with k1: card("Total Perdido", len(perdidos))
-        with k2: card("Motivo: Sem Resposta", perda_sem_resp)
+        with k2: card("Leads sem contato", leads_sem_contato_count)
 
 # =========================
-# APP MAIN (Processamento e Salvamento mantidos)
+# APP MAIN
 # =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
