@@ -115,11 +115,12 @@ def processar(df):
         elif "motivo de perda" in c_lower: cols_map[c] = "Motivo de Perda"
         elif "etapa" in c_lower: cols_map[c] = "Etapa"
         elif "campanha" in c_lower: cols_map[c] = "Campanha"
+        elif c_lower == "estado": cols_map[c] = "Estado"
 
     df = df.rename(columns=cols_map)
     df = df.loc[:, ~df.columns.duplicated()]
 
-    colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte", "Campanha"]
+    colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte", "Campanha", "Estado"]
     for col in colunas_texto:
         if col in df.columns:
             if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
@@ -131,10 +132,15 @@ def processar(df):
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
     
     def status_func(row):
+        estado_lower = str(row.get("Estado", "")).lower()
+        if estado_lower == "perdida": return "Perdido"
+        
         etapa_lower = str(row["Etapa"]).lower()
         if any(x in etapa_lower for x in ["faturado", "ganho", "venda"]): return "Ganho"
+        
         motivo = str(row["Motivo de Perda"]).strip().lower()
         if motivo not in ["", "nan", "none", "-", "0", "nada"]: return "Perdido"
+        
         return "Em Andamento"
         
     df["Status"] = df.apply(status_func, axis=1)
@@ -145,6 +151,7 @@ def processar(df):
 # =========================
 def render_dashboard(df, marca):
     total = len(df)
+    # Filtro robusto para perdas baseado no Estado "Perdida" e motivos válidos
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
     
@@ -169,14 +176,10 @@ def render_dashboard(df, marca):
         if "Campanha" in df.columns:
             st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🚀</span>TOP 3 CAMPANHAS</div>', unsafe_allow_html=True)
             df_camp = df[df["Campanha"] != "N/A"]["Campanha"].value_counts().reset_index()
-            df_camp.columns = ["Campanha", "Qtd"]
             top3_c = df_camp.head(3)
-            
             if not top3_c.empty:
                 for i, row in top3_c.iterrows():
-                    st.markdown(f"""<div class="top-item"><span class="top-rank">#{i+1}</span><span class="top-name">{row['Campanha']}</span><span class="top-val-abs">{row['Qtd']}</span></div>""", unsafe_allow_html=True)
-            else:
-                st.info("Nenhuma campanha identificada.")
+                    st.markdown(f"""<div class="top-item"><span class="top-rank">#{i+1}</span><span class="top-name">{row.iloc[0]}</span><span class="top-val-abs">{row.iloc[1]}</span></div>""", unsafe_allow_html=True)
 
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL (ACUMULADO)")
@@ -204,7 +207,7 @@ def render_dashboard(df, marca):
         c_fun1, c_fun2 = st.columns(2)
         reuniao_realizada_plus = len(df[df["Etapa"].isin(["Reunião Realizada", "negociação", "em aprovação", "faturado"])])
         
-        # CORREÇÃO LÓGICA DO CARD: Perdidos em 'Aguardando Resposta' com motivo 'Sem Resposta'
+        # Leads sem contato: Perdidos na etapa 'Aguardando Resposta' com motivo 'Sem Resposta'
         leads_sem_contato_count = len(perdidos[(perdidos["Etapa"] == "Aguardando Resposta") & 
                                         (perdidos["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))])
         
@@ -214,28 +217,30 @@ def render_dashboard(df, marca):
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
     
-    # --- CORREÇÃO APLICADA AQUI ---
-    # Pegamos os motivos reais presentes nos dados
+    # --- CORREÇÃO DO GRÁFICO DE PERDAS ---
     motivos_reais = perdidos["Motivo de Perda"].unique()
-    # Criamos a união entre os motivos reais e a lista mestra para não perder dados nem os campos obrigatórios (mesmo com 0)
     lista_final_grafico = list(set(motivos_reais) | set(MOTIVOS_PERDA_MESTRADOS))
     
     df_loss = perdidos["Motivo de Perda"].value_counts().reindex(lista_final_grafico, fill_value=0).reset_index()
     df_loss.columns = ["Motivo", "Qtd"]
     df_loss = df_loss.sort_values(by="Qtd", ascending=False)
-    # ------------------------------
     
-    # Cálculo do percentual para o gráfico de perdas
     df_loss["Perc"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
     df_loss["Label_Text"] = df_loss.apply(lambda x: f"{int(x['Qtd'])} ({x['Perc']}%)", axis=1)
     
-    # COR DIFERENTE: Verde Esmeralda (#10b981) para 'Sem Resposta', Vermelho (#ef4444) para os outros
-    df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#10b981' if 'sem resposta' in str(x).lower() else '#ef4444')
+    # Cores: Verde Esmeralda para destaque, gradiente de cinza/azul para os demais (mais fácil de enxergar)
+    df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#10b981' if 'sem resposta' in str(x).lower() else '#334155')
     
+    # Ajuste visual: Barras horizontais mais largas e limpas
     fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Label_Text", orientation="h",
                       color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
     
-    fig_loss.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(autorange="reversed"))
+    fig_loss.update_layout(
+        template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)",
+        yaxis=dict(autorange="reversed", title=""), xaxis=dict(title="Quantidade de Leads"),
+        height=500, margin=dict(l=20, r=20, t=20, b=20)
+    )
+    fig_loss.update_traces(textfont_size=12, textposition='outside', cliponaxis=False)
     st.plotly_chart(fig_loss, use_container_width=True)
     
     k1, k2 = st.columns(2)
