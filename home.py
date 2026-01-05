@@ -55,33 +55,12 @@ st.markdown("""
     font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700;
     background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
-.date-card { background: rgba(15, 23, 42, 0.4); border: 1px solid #334155; border-radius: 12px; padding: 12px; text-align: center; margin-bottom: 30px; }
-.date-label { font-family: 'Rajdhani', sans-serif; font-size: 13px; text-transform: uppercase; letter-spacing: 2px; color: #64748b; margin-bottom: 2px; }
-.date-value { font-family: 'Orbitron', sans-serif; font-size: 18px; color: #94a3b8; letter-spacing: 1px; }
-.funnel-card {
-    background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%); border-top: 2px solid #22d3ee;
-    border-radius: 0 0 12px 12px; padding: 15px; text-align: center; margin-top: -10px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-.funnel-label { font-family: 'Rajdhani', sans-serif; font-size: 14px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; }
-.funnel-percent { font-family: 'Orbitron', sans-serif; font-size: 32px; font-weight: 700; color: #22d3ee; margin: 5px 0; }
-.funnel-sub { font-size: 10px; color: #64748b; font-style: italic; }
-.top-source-container { margin-top: 25px; padding: 0; }
-.top-item {
-    border-left: 3px solid #22d3ee; padding: 12px 15px; margin-bottom: 8px; border-radius: 0 8px 8px 0; display: flex; align-items: center; justify-content: space-between;
-    transition: transform 0.2s; border: 1px solid rgba(34, 211, 238, 0.1); border-left-width: 3px;
-}
-.top-item:hover { transform: translateX(5px); border-color: rgba(34, 211, 238, 0.3); }
-.top-rank { font-family: 'Orbitron', sans-serif; font-weight: 900; color: #22d3ee; font-size: 16px; margin-right: 12px; min-width: 25px; }
-.top-name { font-family: 'Rajdhani', sans-serif; color: #f1f5f9; font-weight: 600; font-size: 15px; flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 10px; }
-.top-val-abs { color: #fff; font-weight: bold; font-size: 14px; display: block; }
-.top-val-pct { color: #94a3b8; font-size: 10px; font-weight: 400; }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
 # CONSTANTES & CONEXÃO
 # =========================
-ETAPAS_FUNIL = ["Sem contato", "Aguardando Resposta", "Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
 MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
 
 def conectar_google():
@@ -97,33 +76,21 @@ def conectar_google():
     except Exception as e:
         return None
 
-# =========================
-# FUNÇÕES VISUAIS
-# =========================
 def card(title, value):
     st.markdown(f'<div class="card"><div class="card-title">{title}</div><div class="card-value">{value}</div></div>', unsafe_allow_html=True)
 
 def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
 
-# =========================
-# MOTOR DE PROCESSAMENTO
-# =========================
 def load_csv(file):
-    # Encoding Latin-1
     raw = file.read().decode("latin-1", errors="ignore")
     sep = ";" if raw.count(";") > raw.count(",") else ","
     file.seek(0)
     return pd.read_csv(file, sep=sep, engine="python", on_bad_lines="skip")
 
 def processar(df):
-    # 1. Limpeza de espaços
     df.columns = df.columns.str.strip()
-    
-    # 2. Remoção imediata de colunas com mesmo nome
     df = df.loc[:, ~df.columns.duplicated()]
-
-    # 3. Mapeamento
     cols_map = {}
     for c in df.columns:
         c_lower = str(c).lower()
@@ -133,36 +100,17 @@ def processar(df):
         elif "equipes do respons" in c_lower or "equipe" in c_lower: cols_map[c] = "Equipe"
         elif c_lower == "motivo de perda": cols_map[c] = "Motivo de Perda"
         elif c_lower == "etapa": cols_map[c] = "Etapa"
-
     df = df.rename(columns=cols_map)
-    df = df.loc[:, ~df.columns.duplicated()]
-
-    # 4. Tratamento de Dados e Encoding
-    colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
-    
-    for col in colunas_texto:
-        if col in df.columns:
-            if isinstance(df[col], pd.DataFrame):
-                df[col] = df[col].iloc[:, 0]
-            
-            # Limpeza de caracteres especiais
-            df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
-        else:
-            df[col] = "N/A"
-
     df["Etapa"] = df["Etapa"].astype(str).str.strip()
-    
     if "Data de Criação" in df.columns:
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], dayfirst=True, errors='coerce')
-    
-    def status(row):
+    def status_func(row):
         etapa_lower = str(row["Etapa"]).lower()
         if any(x in etapa_lower for x in ["faturado", "ganho", "venda"]): return "Ganho"
         motivo = str(row["Motivo de Perda"]).strip().lower()
         if motivo not in ["", "nan", "none", "-", "nan", "0", "nada"]: return "Perdido"
         return "Em Andamento"
-        
-    df["Status"] = df.apply(status, axis=1)
+    df["Status"] = df.apply(status_func, axis=1)
     return df
 
 # =========================
@@ -180,171 +128,96 @@ def render_dashboard(df, marca):
 
     col_mkt, col_funil = st.columns(2)
     
-    # 1. MKT (Gráfico de Pizza e Top 3)
     with col_mkt:
         subheader_futurista("📡", "MARKETING & FONTES")
         if "Fonte" in df.columns:
             df_fonte = df["Fonte"].value_counts().reset_index()
             df_fonte.columns = ["Fonte", "Qtd"]
-            top_fonte = df_fonte.iloc[0]['Fonte'] if not df_fonte.empty else "N/A"
-            
             fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2'])
-            fig_pie.update_traces(textposition='outside', textinfo='percent+label')
-            fig_pie.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
+            fig_pie.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
-            
-            st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🏆</span>TOP 3 CANAIS DE AQUISIÇÃO</div>', unsafe_allow_html=True)
-            top3 = df_fonte.head(3)
-            max_val = top3['Qtd'].max() if not top3.empty else 1
-            html = '<div class="top-source-container">'
-            for i, row in top3.iterrows():
-                perc = (row['Qtd']/total*100)
-                wid = (row['Qtd']/max_val*100)
-                html += f'''
-                <div class="top-item" style="background: linear-gradient(90deg, rgba(34, 211, 238, 0.15) {wid}%, rgba(15, 23, 42, 0.0) {wid}%);">
-                    <div style="display:flex; align-items:center; width: 70%;">
-                        <span class="top-rank">#{i+1}</span><span class="top-name">{row['Fonte']}</span>
-                    </div>
-                    <div class="top-val-group">
-                        <span class="top-val-abs">{row['Qtd']}</span><span class="top-val-pct">{perc:.1f}%</span>
-                    </div>
-                </div>'''
-            html += '</div>'
-            st.markdown(html, unsafe_allow_html=True)
-        else:
-            top_fonte = "N/A"
 
-    # 2. Funil (Gráfico de Barras e Taxa)
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL (ACUMULADO)")
         
-        # LOGICA ACUMULATIVA SOLICITADA
-        # Invertemos a ordem para calcular quem passou por cada etapa
-        etapas_invertidas = ["faturado", "em aprovação", "negociação", "Reunião Realizada", "Reunião Agendada", "Qualificado", "Confirmou Interesse"]
+        # Ordem solicitada: Do início ao fim
+        ordem_funil = ["Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "negociação", "em aprovação", "faturado"]
         
         funil_labels = ["TOTAL DE LEADS"]
         funil_values = [total]
         
-        acumulado = 0
-        for etapa in etapas_invertidas:
-            # Soma quem está na etapa atual + quem já passou dela (quem está nas anteriores da lista invertida)
-            qtd = len(df[df["Etapa"].isin(etapas_invertidas[:etapas_invertidas.index(etapa)+1])])
+        for etapa in ordem_funil:
+            # Lógica: É esta etapa ou qualquer uma das etapas seguintes na jornada
+            idx = ordem_funil.index(etapa)
+            etapas_alvo = ordem_funil[idx:]
+            qtd = len(df[df["Etapa"].isin(etapas_alvo)])
             funil_labels.append(etapa.upper())
             funil_values.append(qtd)
 
-        # Criar DataFrame para o gráfico vertical
         df_plot = pd.DataFrame({"Etapa": funil_labels, "Quantidade": funil_values})
         df_plot["Percentual"] = (df_plot["Quantidade"] / total * 100).round(1)
-        # Label para aparecer no topo da barra: "Qtd (Perc%)"
-        df_plot["Label"] = df_plot.apply(lambda x: f"{int(x['Quantidade'])}<br>{x['Percentual']}%", axis=1)
+        df_plot["Label"] = df_plot.apply(lambda x: f"{int(x['Quantidade'])} ({x['Percentual']}%)", axis=1)
 
-        fig_funil = px.bar(
-            df_plot, x="Etapa", y="Quantidade", 
-            text="Label", 
-            color="Quantidade", 
-            color_continuous_scale="Blues"
-        )
-        fig_funil.update_traces(textposition='outside')
+        # Palos Horizontais
+        fig_funil = px.bar(df_plot, y="Etapa", x="Quantidade", text="Label", orientation="h",
+                          color="Quantidade", color_continuous_scale="Blues")
         fig_funil.update_layout(
-            template="plotly_dark", 
-            showlegend=False, 
-            plot_bgcolor="rgba(0,0,0,0)", 
-            paper_bgcolor="rgba(0,0,0,0)",
-            xaxis={'categoryorder':'array', 'categoryarray':funil_labels} # Garante a ordem da esquerda para direita
+            template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)",
+            yaxis={'categoryorder':'array', 'categoryarray':funil_labels[::-1]} # Inverte array para o total ficar no topo
         )
         st.plotly_chart(fig_funil, use_container_width=True)
         
         # CARDS EMBAIXO DO FUNIL
         c_fun1, c_fun2 = st.columns(2)
-        
-        # Qtd Reunião Realizada + seguintes
         reuniao_realizada_plus = len(df[df["Etapa"].isin(["Reunião Realizada", "negociação", "em aprovação", "faturado"])])
-        # Aguardando Resposta apenas EM ANDAMENTO
-        aguardando_andamento = len(df[(df["Etapa"] == "Aguardando Resposta") & (df["Status"] == "Em Andamento")])
         
-        with c_fun1:
-            card("Reunião Realizada (+)", reuniao_realizada_plus)
-        with c_fun2:
-            card("Aguardando Resposta (Ativos)", aguardando_andamento)
+        # Ajuste Leads sem contato (Etapa Aguardando Resposta ou Sem Contato)
+        leads_sem_contato = len(df[(df["Etapa"].isin(["Aguardando Resposta", "Sem contato"])) & (df["Status"] == "Em Andamento")])
+        
+        with c_fun1: card("Reunião Realizada (+)", reuniao_realizada_plus)
+        with c_fun2: card("Leads sem contato", leads_sem_contato)
 
-    # 3. DETALHE DAS PERDAS (AGORA POR MOTIVO DE PERDA)
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
-    k1, k2 = st.columns(2)
-    with k1: card("Total Perdido", len(perdidos))
-    with k2: card("Perda: Aguardando s/ Resp.", len(perda_especifica) if 'perda_especifica' in locals() else 0)
     
-    st.write("")
-    if not perdidos.empty and "Motivo de Perda" in perdidos.columns:
+    if not perdidos.empty:
         perdas_validas = perdidos[~perdidos["Motivo de Perda"].isin(["", "nan", "N/A", "None"])]
         df_loss = perdas_validas["Motivo de Perda"].value_counts().reset_index()
         df_loss.columns = ["Motivo", "Qtd"]
         df_loss = df_loss.head(15)
-        df_loss["Percentual"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
-        df_loss["Label"] = df_loss.apply(lambda x: f"{x['Qtd']} ({x['Percentual']}%)", axis=1)
         
-        fig_loss = px.bar(
-            df_loss, 
-            x="Qtd", 
-            y="Motivo", 
-            text="Label", 
-            orientation="h",
-            color="Qtd", 
-            color_continuous_scale="Reds",
-            title="Principais Motivos de Perda (Top 15)"
-        )
-        fig_loss.update_layout(
-            template="plotly_dark", 
-            plot_bgcolor="rgba(0,0,0,0)", 
-            paper_bgcolor="rgba(0,0,0,0)", 
-            showlegend=False,
-            yaxis=dict(autorange="reversed") 
-        )
+        # Cor Azul para "sem resposta", Vermelho para os outros
+        df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#22d3ee' if 'resposta' in str(x).lower() else '#ef4444')
+        
+        fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h",
+                          color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
+        
+        fig_loss.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig_loss, use_container_width=True)
-    else:
-        st.info("Não há dados suficientes de motivos de perda preenchidos.")
-
-    return {
-        "Total": total, "Andamento": len(em_andamento), "Perdidos": len(perdidos),
-        "TopFonte": top_fonte
-    }
+        
+        # Card de Perdas corrigido
+        perda_sem_resp = len(perdidos[perdidos["Motivo de Perda"].str.lower().str.contains("resposta", na=False)])
+        k1, k2 = st.columns(2)
+        with k1: card("Total Perdido", len(perdidos))
+        with k2: card("Motivo: Sem Resposta", perda_sem_resp)
 
 # =========================
-# APP MAIN
+# APP MAIN (Processamento e Salvamento mantidos)
 # =========================
 st.markdown('<div class="futuristic-title">💠 BI CRM Expansão</div>', unsafe_allow_html=True)
 
 st.sidebar.header("Painel de Carga")
 marca_sel = st.sidebar.selectbox("Marca", MARCAS)
 semana_sel = st.sidebar.selectbox("Semana Ref.", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
-
 arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
 
 if arquivo:
     try:
         df = load_csv(arquivo)
         df = processar(df)
-        
-        # --- LÓGICA INTELIGENTE PARA EQUIPE ---
         resp = df["Responsável"].mode()[0] if not df["Responsável"].empty else "N/A"
+        equipe = f"Expansão {marca_sel}"
         
-        if "Equipe" in df.columns and not df["Equipe"].empty:
-             equipe_raw = str(df["Equipe"].mode()[0])
-        else:
-             equipe_raw = "N/A"
-
-        if "Prepara" in equipe_raw:
-             equipe = "Expansão Prepara"
-        elif "Microlins" in equipe_raw:
-             equipe = "Expansão Microlins"
-        elif "Ensina" in equipe_raw:
-             equipe = "Expansão Ensina Mais"
-        elif any(x in equipe_raw for x in ["Geral", "nan", "N/A", ""]): 
-             equipe = f"Expansão {marca_sel}"
-        else:
-             equipe = equipe_raw
-
-        # --- EXIBIÇÃO DO HEADER ---
         st.markdown(f"""
         <div class="profile-header">
             <div class="profile-group"><span class="profile-label">Responsável</span><span class="profile-value">{resp}</span></div>
@@ -352,61 +225,20 @@ if arquivo:
             <div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe}</span></div>
         </div>""", unsafe_allow_html=True)
         
-        if "Data de Criação" in df.columns:
-            d_min = df["Data de Criação"].min().strftime('%d/%m/%Y')
-            d_max = df["Data de Criação"].max().strftime('%d/%m/%Y')
-            st.markdown(f'<div class="date-card"><div class="date-label">📅 Recorte Temporal</div><div class="date-value">{d_min} ➔ {d_max}</div></div>', unsafe_allow_html=True)
-
-        # Chama Dashboard Completo
-        metrics = render_dashboard(df, marca_sel)
+        render_dashboard(df, marca_sel)
         
-        st.sidebar.divider()
-        
-        # ==========================================================
-        # BOTÃO SALVAR (COM CORREÇÃO DE CABEÇALHO)
-        # ==========================================================
         if st.sidebar.button(f"🚀 SALVAR HISTÓRICO: {semana_sel}"):
-            with st.spinner("Conectando e salvando Snapshot..."):
-                client = conectar_google()
-                if client:
-                    try:
-                        sh = client.open("BI_Historico")
-                        try:
-                            ws = sh.worksheet("db_snapshots")
-                        except:
-                            ws = sh.add_worksheet(title="db_snapshots", rows="1000", cols="20")
-                        
-                        df_save = df.copy()
-                        agora = datetime.now()
-                        snapshot_id = agora.strftime("%Y%m%d_%H%M%S")
-                        
-                        df_save['snapshot_id'] = snapshot_id
-                        df_save['data_salvamento'] = agora.strftime('%d/%m/%Y %H:%M')
-                        df_save['semana_ref'] = semana_sel
-                        df_save['marca_ref'] = marca_sel
-                        
-                        df_save = df_save.astype(str)
-                        dados_existentes = ws.get_all_values()
-                        
-                        precisa_resetar = False
-                        if not dados_existentes:
-                            precisa_resetar = True
-                        elif len(dados_existentes) > 0 and 'snapshot_id' not in dados_existentes[0]:
-                            precisa_resetar = True
-                            
-                        if precisa_resetar:
-                            ws.clear() 
-                            ws.update([df_save.columns.values.tolist()] + df_save.values.tolist())
-                        else:
-                            ws.append_rows(df_save.values.tolist())
-                            
-                        st.sidebar.success(f"Snapshot salvo com sucesso! ID: {snapshot_id}")
-                        st.balloons()
-                        
-                    except Exception as e:
-                        st.sidebar.error(f"Erro planilha: {e}")
-                else:
-                    st.sidebar.error("Erro de conexão Google.")
-                    
+            client = conectar_google()
+            if client:
+                sh = client.open("BI_Historico")
+                try: ws = sh.worksheet("db_snapshots")
+                except: ws = sh.add_worksheet(title="db_snapshots", rows="1000", cols="20")
+                df_save = df.copy()
+                df_save['snapshot_id'] = datetime.now().strftime("%Y%m%d_%H%M%S")
+                df_save['data_salvamento'] = datetime.now().strftime('%d/%m/%Y %H:%M')
+                df_save['semana_ref'] = semana_sel
+                df_save['marca_ref'] = marca_sel
+                ws.append_rows(df_save.astype(str).values.tolist())
+                st.sidebar.success("Snapshot salvo!")
     except Exception as e:
-        st.error(f"Erro no processamento: {e}")
+        st.error(f"Erro: {e}")
