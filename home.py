@@ -214,10 +214,16 @@ def render_dashboard(df, marca):
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
     
-    # LÓGICA DO GRÁFICO DE PERDAS COM COR DIFERENTE PARA 'SEM RESPOSTA'
-    df_loss = perdidos["Motivo de Perda"].value_counts().reindex(MOTIVOS_PERDA_MESTRADOS, fill_value=0).reset_index()
+    # --- CORREÇÃO APLICADA AQUI ---
+    # Pegamos os motivos reais presentes nos dados
+    motivos_reais = perdidos["Motivo de Perda"].unique()
+    # Criamos a união entre os motivos reais e a lista mestra para não perder dados nem os campos obrigatórios (mesmo com 0)
+    lista_final_grafico = list(set(motivos_reais) | set(MOTIVOS_PERDA_MESTRADOS))
+    
+    df_loss = perdidos["Motivo de Perda"].value_counts().reindex(lista_final_grafico, fill_value=0).reset_index()
     df_loss.columns = ["Motivo", "Qtd"]
     df_loss = df_loss.sort_values(by="Qtd", ascending=False)
+    # ------------------------------
     
     # Cálculo do percentual para o gráfico de perdas
     df_loss["Perc"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
