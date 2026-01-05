@@ -106,7 +106,6 @@ def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
 
 def processar_snapshot(df):
-    # Recalcula Status e Data
     def status(row):
         etapa_lower = str(row["Etapa"]).lower() if "Etapa" in row else ""
         motivo = str(row["Motivo de Perda"]).strip().lower() if "Motivo de Perda" in row else ""
@@ -117,7 +116,6 @@ def processar_snapshot(df):
     if "Status" not in df.columns:
         df["Status"] = df.apply(status, axis=1)
         
-    # Converter Data de Criação para DateTime real (para o recorte temporal)
     if "Data de Criação" in df.columns:
         df["Data de Criação"] = pd.to_datetime(df["Data de Criação"], errors='coerce')
         
@@ -127,10 +125,9 @@ def processar_snapshot(df):
     return df
 
 # =========================
-# RENDERIZADOR COMPLETO (IDÊNTICO À HOME)
+# RENDERIZADOR COMPLETO
 # =========================
 def render_dashboard_completo(df):
-    # 1. HEADER (RESPONSÁVEL E EQUIPE)
     resp = df["Responsável"].mode()[0] if "Responsável" in df.columns and not df["Responsável"].empty else "N/A"
     
     equipe = "N/A"
@@ -150,7 +147,6 @@ def render_dashboard_completo(df):
         <div class="profile-group"><span class="profile-label">Equipe</span><span class="profile-value">{equipe}</span></div>
     </div>""", unsafe_allow_html=True)
     
-    # 2. DATA CARD (RECORTE TEMPORAL)
     if "Data de Criação" in df.columns and pd.api.types.is_datetime64_any_dtype(df["Data de Criação"]):
         d_min = df["Data de Criação"].min()
         d_max = df["Data de Criação"].max()
@@ -158,7 +154,6 @@ def render_dashboard_completo(df):
             d_str = f"{d_min.strftime('%d/%m/%Y')} ➔ {d_max.strftime('%d/%m/%Y')}"
             st.markdown(f'<div class="date-card"><div class="date-label">📅 Recorte Temporal do Arquivo</div><div class="date-value">{d_str}</div></div>', unsafe_allow_html=True)
 
-    # 3. KPIs TOPO
     total = len(df)
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
@@ -168,16 +163,13 @@ def render_dashboard_completo(df):
     with c2: card("Leads em Andamento", len(em_andamento))
     st.divider()
 
-    # 4. GRÁFICOS CENTRAIS
     col_mkt, col_funil = st.columns(2)
     
-    # Marketing
     with col_mkt:
         subheader_futurista("📡", "MARKETING & FONTES")
         if "Fonte" in df.columns:
             df_fonte = df["Fonte"].value_counts().reset_index()
             df_fonte.columns = ["Fonte", "Qtd"]
-            
             fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2', '#155e75'])
             fig_pie.update_traces(textposition='outside', textinfo='percent+label')
             fig_pie.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
@@ -201,59 +193,49 @@ def render_dashboard_completo(df):
                 </div>'''
             html += '</div>'
             st.markdown(html, unsafe_allow_html=True)
-        else:
-            st.warning("Dados de Fonte indisponíveis.")
 
-    # Funil
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL")
         if "Etapa" in df.columns:
             df_funil = df.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
             df_funil["Percentual"] = (df_funil["Qtd"] / total * 100).round(1) if total > 0 else 0
-            
-            # Taxa Avanço
             avanco_list = ["Qualificado", "Reunião Agendada", "Reunião Realizada", "Follow-up", "negociação", "em aprovação", "faturado"]
             df['Etapa_Clean'] = df['Etapa'].str.strip()
             qtd_avanco = len(df[df['Etapa_Clean'].isin(avanco_list)])
-            
-            perda_especifica = df[
-                (df["Etapa"].str.strip() == "Aguardando Resposta") & 
-                (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))
-            ] if "Motivo de Perda" in df.columns else pd.DataFrame()
-            
+            perda_especifica = df[(df["Etapa"].str.strip() == "Aguardando Resposta") & (df["Motivo de Perda"].str.lower().str.contains("sem resposta", na=False))] if "Motivo de Perda" in df.columns else pd.DataFrame()
             qtd_sem_resp = len(perda_especifica)
             base = total - qtd_sem_resp
             taxa_avanco = (qtd_avanco / base * 100) if base > 0 else 0
-            
             fig_funil = px.bar(df_funil, x="Qtd", y="Etapa", orientation="h", text=df_funil["Percentual"].astype(str)+"%", color="Qtd", color_continuous_scale="Blues")
             fig_funil.update_layout(template="plotly_dark", showlegend=False, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_funil, use_container_width=True)
-            
-            st.markdown(f'''
-            <div class="funnel-card">
-                <div class="funnel-label">🚀 Taxa de Avanço Real de Funil</div>
-                <div class="funnel-percent">{taxa_avanco:.1f}%</div>
-                <div class="funnel-sub">Leads Qualificados+ / (Total - Sem Resposta)</div>
-            </div>''', unsafe_allow_html=True)
-        else:
-            st.warning("Dados de Etapa indisponíveis.")
+            st.markdown(f'''<div class="funnel-card"><div class="funnel-label">🚀 Taxa de Avanço Real de Funil</div><div class="funnel-percent">{taxa_avanco:.1f}%</div><div class="funnel-sub">Leads Qualificados+ / (Total - Sem Resposta)</div></div>''', unsafe_allow_html=True)
 
-    # 5. DETALHE DAS PERDAS
+    # ==========================================================
+    # CORREÇÃO: DETALHE DAS PERDAS POR MOTIVO (HISTÓRICO)
+    # ==========================================================
     st.divider()
-    subheader_futurista("🚫", "DETALHE DAS PERDAS")
+    subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
     k1, k2 = st.columns(2)
     with k1: card("Total Perdido", len(perdidos))
     with k2: card("Perda: Aguardando s/ Resp.", len(perda_especifica) if "Motivo de Perda" in df.columns else 0)
     
     st.write("")
-    if not perdidos.empty and "Etapa" in perdidos.columns:
-        df_loss = perdidos.groupby("Etapa").size().reindex(ETAPAS_FUNIL).fillna(0).reset_index(name="Qtd")
+    if not perdidos.empty and "Motivo de Perda" in perdidos.columns:
+        perdas_validas = perdidos[~perdidos["Motivo de Perda"].isin(["", "nan", "N/A", "None"])]
+        df_loss = perdas_validas["Motivo de Perda"].value_counts().reset_index()
+        df_loss.columns = ["Motivo", "Qtd"]
+        df_loss = df_loss.head(15)
         df_loss["Percentual"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
-        df_loss["Label"] = df_loss.apply(lambda x: f"{int(x['Qtd'])}<br>({x['Percentual']}%)", axis=1)
+        df_loss["Label"] = df_loss.apply(lambda x: f"{x['Qtd']} ({x['Percentual']}%)", axis=1)
         
-        fig_loss = px.bar(df_loss, x="Etapa", y="Qtd", text="Label", color="Qtd", color_continuous_scale="Blues")
-        fig_loss.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
+        fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Label", orientation="h",
+                          color="Qtd", color_continuous_scale="Reds", title="Principais Motivos de Perda no Snapshot")
+        fig_loss.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", 
+                               showlegend=False, yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig_loss, use_container_width=True)
+    else:
+        st.info("Não há dados de motivos de perda detalhados neste snapshot.")
 
 # =========================
 # APP MAIN
@@ -263,13 +245,11 @@ st.markdown('<div class="futuristic-title">🕰️ Máquina do Tempo</div>', uns
 with st.spinner("Sincronizando com o banco de dados..."):
     client = conectar_google()
     df_db = pd.DataFrame()
-    
     if client:
         try:
             sh = client.open("BI_Historico")
             ws = sh.worksheet("db_snapshots")
             dados = ws.get_all_values()
-            
             if len(dados) > 1 and 'snapshot_id' in dados[0]:
                 df_db = pd.DataFrame(dados[1:], columns=dados[0])
             else:
@@ -279,68 +259,40 @@ with st.spinner("Sincronizando com o banco de dados..."):
             st.error(f"Erro: {e}")
             st.stop()
 
-# =========================
-# SISTEMA DE FILTRO EM CASCATA (DRILL-DOWN)
-# =========================
 if not df_db.empty:
     st.sidebar.header("🗂️ Filtros de Busca")
-    
-    # 1. Preparar Colunas Auxiliares para Filtro
     df_db['data_dt'] = pd.to_datetime(df_db['data_salvamento'], dayfirst=True, errors='coerce')
     df_db['Ano_Filtro'] = df_db['data_dt'].dt.year.fillna(0).astype(int)
-    # Mes em Português para ficar bonito
     meses_pt = {1:"Janeiro", 2:"Fevereiro", 3:"Março", 4:"Abril", 5:"Maio", 6:"Junho", 7:"Julho", 8:"Agosto", 9:"Setembro", 10:"Outubro", 11:"Novembro", 12:"Dezembro"}
     df_db['Mes_Filtro'] = df_db['data_dt'].dt.month.map(meses_pt)
-    
     if 'marca_ref' not in df_db.columns: df_db['marca_ref'] = 'Geral'
     
-    # --- NIVEL 1: MARCA ---
     marcas_disp = sorted(df_db['marca_ref'].unique())
     f_marca = st.sidebar.selectbox("1. Marca", marcas_disp)
     df_f1 = df_db[df_db['marca_ref'] == f_marca]
     
-    # --- NIVEL 2: ANO ---
     anos_disp = sorted(df_f1['Ano_Filtro'].unique(), reverse=True)
-    if len(anos_disp) > 0:
-        f_ano = st.sidebar.selectbox("2. Ano", anos_disp)
-        df_f2 = df_f1[df_f1['Ano_Filtro'] == f_ano]
-    else:
-        df_f2 = df_f1
+    f_ano = st.sidebar.selectbox("2. Ano", anos_disp) if len(anos_disp) > 0 else 0
+    df_f2 = df_f1[df_f1['Ano_Filtro'] == f_ano] if f_ano != 0 else df_f1
 
-    # --- NIVEL 3: MÊS ---
     meses_disp = df_f2['Mes_Filtro'].unique()
-    if len(meses_disp) > 0:
-        f_mes = st.sidebar.selectbox("3. Mês", meses_disp)
-        df_f3 = df_f2[df_f2['Mes_Filtro'] == f_mes]
-    else:
-        df_f3 = df_f2
+    f_mes = st.sidebar.selectbox("3. Mês", meses_disp) if len(meses_disp) > 0 else ""
+    df_f3 = df_f2[df_f2['Mes_Filtro'] == f_mes] if f_mes != "" else df_f2
 
-    # --- NIVEL 4: SEMANA (ARQUIVO FINAL) ---
     if not df_f3.empty:
-        # Cria label bonito: "Semana 1 (Salvo em 04/01 às 14:00)"
         df_f3['Label_Select'] = df_f3['semana_ref'] + " | " + df_f3['data_salvamento']
-        
-        # Remove duplicatas de ID (mostra apenas uma opção por snapshot)
         opcoes = df_f3[['snapshot_id', 'Label_Select']].drop_duplicates().sort_values('snapshot_id', ascending=False)
-        
         f_arquivo = st.sidebar.selectbox("4. Arquivo (Snapshot)", opcoes['Label_Select'])
         
-        # --- CARREGAR E RENDERIZAR ---
         if f_arquivo:
             id_snap = opcoes[opcoes['Label_Select'] == f_arquivo]['snapshot_id'].values[0]
-            
-            # Filtra e Limpa
             df_recuperado = df_db[df_db['snapshot_id'] == id_snap].copy()
             cols_tec = ['snapshot_id', 'data_salvamento', 'semana_ref', 'marca_ref', 'Ano_Filtro', 'Mes_Filtro', 'Label_Select', 'data_dt']
             df_visual = df_recuperado.drop(columns=[c for c in cols_tec if c in df_recuperado.columns])
-            
-            # Processa e Renderiza
             df_final = processar_snapshot(df_visual)
-            
             st.divider()
             render_dashboard_completo(df_final)
-            
             with st.expander("🔍 Ver Dados Brutos"):
                 st.dataframe(df_final)
     else:
-        st.sidebar.warning("Nenhum arquivo encontrado para esta combinação.")
+        st.sidebar.warning("Nenhum arquivo encontrado.")
