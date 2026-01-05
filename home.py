@@ -56,6 +56,13 @@ st.markdown("""
     font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700;
     background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
+.top-item {
+    border-left: 3px solid #22d3ee; padding: 12px 15px; margin-bottom: 8px; border-radius: 0 8px 8px 0; display: flex; align-items: center; justify-content: space-between;
+    transition: transform 0.2s; border: 1px solid rgba(34, 211, 238, 0.1); border-left-width: 3px; background: rgba(30, 41, 59, 0.5);
+}
+.top-rank { font-family: 'Orbitron', sans-serif; font-weight: 900; color: #22d3ee; font-size: 16px; margin-right: 12px; }
+.top-name { font-family: 'Rajdhani', sans-serif; color: #f1f5f9; font-weight: 600; font-size: 14px; flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-val-abs { font-family: 'Orbitron', sans-serif; color: #fff; font-weight: bold; font-size: 14px; margin-left: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -83,30 +90,16 @@ def card(title, value):
 def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
 
-# =========================
-# MOTOR DE PROCESSAMENTO (CORRIGIDO)
-# =========================
 def load_csv(file):
     raw = file.read().decode("latin-1", errors="ignore")
-    
-    # TRATAMENTO PARA IGNORAR LINHA 'sep=' DO RD STATION
     if raw.strip().startswith("sep="):
-        # Remove a primeira linha e mantém o resto
         raw = "\n".join(raw.splitlines()[1:])
-        
-    # Identifica o separador nos dados reais
     sep = ";" if raw.count(";") > raw.count(",") else ","
-    
     return pd.read_csv(io.StringIO(raw), sep=sep, engine="python", on_bad_lines="skip")
 
 def processar(df):
-    # 1. Limpeza de espaços nos nomes das colunas
     df.columns = df.columns.str.strip()
-    
-    # 2. Remoção imediata de colunas com mesmo nome
     df = df.loc[:, ~df.columns.duplicated()]
-
-    # 3. Mapeamento Robusto
     cols_map = {}
     for c in df.columns:
         c_lower = str(c).lower()
@@ -116,21 +109,16 @@ def processar(df):
         elif "equipes do respons" in c_lower or "equipe" in c_lower: cols_map[c] = "Equipe"
         elif "motivo de perda" in c_lower: cols_map[c] = "Motivo de Perda"
         elif "etapa" in c_lower: cols_map[c] = "Etapa"
+        elif "campanha" in c_lower: cols_map[c] = "Campanha"
 
     df = df.rename(columns=cols_map)
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # 4. Tratamento de Dados e Encoding
-    colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte"]
-    
+    colunas_texto = ["Responsável", "Equipe", "Etapa", "Motivo de Perda", "Fonte", "Campanha"]
     for col in colunas_texto:
         if col in df.columns:
-            if isinstance(df[col], pd.DataFrame):
-                df[col] = df[col].iloc[:, 0]
-            
-            # Limpeza de caracteres especiais
-            df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A")
-            df[col] = df[col].str.strip()
+            if isinstance(df[col], pd.DataFrame): df[col] = df[col].iloc[:, 0]
+            df[col] = df[col].astype(str).str.replace("ExpansÃ£o", "Expansão").str.replace("responsÃ¡vel", "responsável").fillna("N/A").str.strip()
         else:
             df[col] = "N/A"
 
@@ -148,7 +136,7 @@ def processar(df):
     return df
 
 # =========================
-# DASHBOARD LOGIC (Visualização)
+# DASHBOARD LOGIC
 # =========================
 def render_dashboard(df, marca):
     total = len(df)
@@ -167,13 +155,35 @@ def render_dashboard(df, marca):
         if "Fonte" in df.columns:
             df_fonte = df["Fonte"].value_counts().reset_index()
             df_fonte.columns = ["Fonte", "Qtd"]
-            fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2'])
+            
+            # Gráfico de Pizza com Nome e Número
+            fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, 
+                             color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2', '#1e293b'])
+            fig_pie.update_traces(textposition='inside', textinfo='label+value')
             fig_pie.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
 
+        # SEÇÃO TOP CAMPANHAS
+        if "Campanha" in df.columns:
+            st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🚀</span>TOP 3 CAMPANHAS</div>', unsafe_allow_html=True)
+            df_camp = df[df["Campanha"] != "N/A"]["Campanha"].value_counts().reset_index()
+            df_camp.columns = ["Campanha", "Qtd"]
+            top3_c = df_camp.head(3)
+            
+            if not top3_c.empty:
+                for i, row in top3_c.iterrows():
+                    st.markdown(f"""
+                    <div class="top-item">
+                        <span class="top-rank">#{i+1}</span>
+                        <span class="top-name">{row['Campanha']}</span>
+                        <span class="top-val-abs">{row['Qtd']}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("Nenhuma campanha identificada.")
+
     with col_funil:
         subheader_futurista("📉", "DESCIDA DE FUNIL (ACUMULADO)")
-        
         ordem_funil = ["Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "negociação", "em aprovação", "faturado"]
         funil_labels = ["TOTAL DE LEADS"]
         funil_values = [total]
@@ -191,10 +201,8 @@ def render_dashboard(df, marca):
 
         fig_funil = px.bar(df_plot, y="Etapa", x="Quantidade", text="Label", orientation="h",
                           color="Quantidade", color_continuous_scale="Blues")
-        fig_funil.update_layout(
-            template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)",
-            yaxis={'categoryorder':'array', 'categoryarray':funil_labels[::-1]}
-        )
+        fig_funil.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)",
+                                yaxis={'categoryorder':'array', 'categoryarray':funil_labels[::-1]})
         st.plotly_chart(fig_funil, use_container_width=True)
         
         c_fun1, c_fun2 = st.columns(2)
@@ -207,21 +215,16 @@ def render_dashboard(df, marca):
 
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
-    
     if not perdidos.empty:
         perdas_validas = perdidos[~perdidos["Motivo de Perda"].isin(["", "nan", "N/A", "None"])]
         df_loss = perdas_validas["Motivo de Perda"].value_counts().reset_index()
         df_loss.columns = ["Motivo", "Qtd"]
         df_loss = df_loss.sort_values(by="Qtd", ascending=False).head(15)
-        
         df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#4ade80' if 'sem resposta' in str(x).lower() else '#ef4444')
-        
         fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h",
                           color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
-        
         fig_loss.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig_loss, use_container_width=True)
-        
         k1, k2 = st.columns(2)
         with k1: card("Total Perdido", len(perdidos))
         with k2: card("Leads sem contato", leads_sem_contato_count)
