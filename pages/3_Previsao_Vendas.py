@@ -32,7 +32,6 @@ st.markdown("""
 .kpi-val { font-family: 'Orbitron'; font-size: 24px; color: #4ade80; }
 .kpi-lbl { font-family: 'Rajdhani'; font-size: 14px; color: #94a3b8; text-transform: uppercase; }
 
-/* Ajuste para tabela editável */
 div[data-testid="stDataEditor"] { border: 1px solid #22d3ee; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
@@ -40,6 +39,9 @@ div[data-testid="stDataEditor"] { border: 1px solid #22d3ee; border-radius: 5px;
 # =========================
 # CONEXÃO GOOGLE SHEETS
 # =========================
+# Definição das colunas obrigatórias para evitar KeyError
+COLUNAS_OBRIGATORIAS = ["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"]
+
 def conectar_google():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -52,32 +54,56 @@ def conectar_google():
         return gspread.authorize(creds)
     except: return None
 
-# Nome da planilha no Google Drive
-PLANILHA_NOME = "BI_Historico" # Ou mude para o nome da planilha que criou
+PLANILHA_NOME = "BI_Historico"
 
 # =========================
-# FUNÇÕES DE CRUD (Create, Read, Update, Delete)
+# FUNÇÕES DE BANCO DE DADOS (ROBUSTAS)
 # =========================
 
 def carregar_aba(nome_aba):
+    """Carrega dados e GARANTE que as colunas existem para não dar erro."""
     client = conectar_google()
-    if not client: return pd.DataFrame()
+    # Se falhar conexão, retorna vazio com colunas certas
+    if not client: return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
+    
     try:
         sh = client.open(PLANILHA_NOME)
-        ws = sh.worksheet(nome_aba)
+        
+        # Tenta abrir a aba, se não existir, cria
+        try:
+            ws = sh.worksheet(nome_aba)
+        except:
+            ws = sh.add_worksheet(nome_aba, 1000, 20)
+            ws.append_row(COLUNAS_OBRIGATORIAS) # Cria cabeçalho
+            return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
+            
         dados = ws.get_all_values()
-        if len(dados) > 0:
-            df = pd.DataFrame(dados[1:], columns=dados[0])
-            # Tratamento de tipos
-            if 'Valor' in df.columns:
-                df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
-            return df
-        return pd.DataFrame(columns=["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"])
-    except:
-        return pd.DataFrame(columns=["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"])
+        
+        # Se estiver vazia (sem nem cabeçalho)
+        if not dados:
+            ws.append_row(COLUNAS_OBRIGATORIAS)
+            return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
+            
+        # Carrega DataFrame
+        df = pd.DataFrame(dados[1:], columns=dados[0])
+        
+        # VERIFICAÇÃO DE SEGURANÇA (CORREÇÃO DO KEYERROR)
+        # Se o cabeçalho estiver errado (ex: não tem 'Valor'), ignora os dados e retorna vazio estruturado
+        if 'Valor' not in df.columns or 'Marca' not in df.columns:
+            # Opcional: Poderiamos limpar a aba aqui, mas por segurança apenas retornamos o DF vazio correto
+            return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
+            
+        # Tratamento de tipos
+        df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
+        return df
+
+    except Exception as e:
+        # Em caso de qualquer erro catastrófico, não quebra a tela
+        return pd.DataFrame(columns=COLUNAS_OBRIGATORIAS)
 
 def salvar_full(nome_aba, df):
     client = conectar_google()
+    if not client: return
     sh = client.open(PLANILHA_NOME)
     try:
         ws = sh.worksheet(nome_aba)
@@ -85,22 +111,23 @@ def salvar_full(nome_aba, df):
         ws = sh.add_worksheet(nome_aba, 1000, 20)
     
     ws.clear()
-    # Converte tipos para salvar
+    # Garante que salva como string para não bugar JSON
     df_save = df.copy()
     df_save = df_save.astype(str)
     ws.update([df_save.columns.values.tolist()] + df_save.values.tolist())
 
 def adicionar_lead(dados):
     client = conectar_google()
+    if not client: return
     sh = client.open(PLANILHA_NOME)
     try:
         ws = sh.worksheet("previsao_ativa")
     except:
         ws = sh.add_worksheet("previsao_ativa", 1000, 20)
     
-    # Se estiver vazio, adiciona cabeçalho
+    # Se vazia, põe cabeçalho antes
     if not ws.get_all_values():
-        ws.append_row(["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"])
+        ws.append_row(COLUNAS_OBRIGATORIAS)
     
     ws.append_row(dados)
 
@@ -133,29 +160,29 @@ with st.sidebar.form("form_add"):
 # =========================
 st.markdown('<div class="futuristic-header">🔮 Painel de Previsão de Vendas</div>', unsafe_allow_html=True)
 
-# Filtro Global de Marca para Visualização
+# Filtro Global
 filtro_marca = st.selectbox("Filtrar Visão por Marca:", ["TODAS"] + marcas_opts)
 
-# Carrega Dados
+# Carrega Dados (Agora blindado contra erro)
 df_ativos = carregar_aba("previsao_ativa")
 df_prorrog = carregar_aba("prorrogacao")
 df_desist = carregar_aba("desistencia")
 
-# Aplica Filtro de Marca (apenas visual)
+# Aplica Filtro Visual
 def filtrar(df):
     if filtro_marca != "TODAS" and not df.empty and "Marca" in df.columns:
         return df[df["Marca"] == filtro_marca]
     return df
 
-# ABAS DE NAVEGAÇÃO
+# ABAS
 tab1, tab2, tab3 = st.tabs(["🎯 Previsão Ativa", "⏳ Prorrogações", "🚫 Desistências"])
 
-# --- TAB 1: ATIVOS (EDITÁVEL) ---
+# --- TAB 1: ATIVOS ---
 with tab1:
     df_view = filtrar(df_ativos)
     
     # KPIs Rápidos
-    total_prev = df_view['Valor'].sum() if not df_view.empty else 0
+    total_prev = df_view['Valor'].sum() if not df_view.empty else 0.0
     leads_count = len(df_view)
     
     k1, k2 = st.columns(2)
@@ -167,7 +194,7 @@ with tab1:
     if not df_ativos.empty:
         st.info("Edite o **Valor** diretamente na tabela ou escolha uma **Ação** e clique em Processar.")
         
-        # Adiciona coluna de controle local para o Data Editor
+        # Coluna de controle
         df_ativos['Ação'] = "Manter" 
         
         # Configuração das Colunas
@@ -180,13 +207,10 @@ with tab1:
                 help="Selecione o destino deste lead"
             ),
             "Marca": st.column_config.SelectboxColumn("Marca", options=marcas_opts, required=True),
-            "Data_Registro": st.column_config.TextColumn("Data", disabled=True) # Data fixa
+            "Data_Registro": st.column_config.TextColumn("Data", disabled=True)
         }
         
-        # Mostra Tabela Editável (Se filtrar, mostra filtrado, mas precisamos editar o original com cuidado)
-        # Para simplificar a lógica de edição, mostramos apenas o filtrado, mas salvamos no geral.
-        
-        # Data Editor
+        # Mostra Tabela
         df_editado = st.data_editor(
             df_view if filtro_marca != "TODAS" else df_ativos,
             column_config=col_config,
@@ -198,54 +222,43 @@ with tab1:
         
         col_btn, _ = st.columns([1, 4])
         if col_btn.button("⚡ Processar Alterações", type="primary"):
-            with st.spinner("Atualizando banco de dados..."):
-                # Lógica de Movimentação
-                
-                # 1. Identifica quem sai
+            with st.spinner("Atualizando..."):
+                # Separa grupos
                 prorrogados = df_editado[df_editado['Ação'] == 'Prorrogar'].copy()
                 desistentes = df_editado[df_editado['Ação'] == 'Desistência'].copy()
                 mantidos_editados = df_editado[df_editado['Ação'] == 'Manter'].copy()
                 
-                # Remove coluna Ação para salvar
-                cols_save = ["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"]
+                cols_save = COLUNAS_OBRIGATORIAS
                 
-                # Se houver filtro, precisamos fundir com os dados que estavam ocultos
+                # Reconstrução dos Ativos
                 if filtro_marca != "TODAS":
-                    # Pega os dados que NÃO estavam na tela (outras marcas)
                     df_outras_marcas = df_ativos[df_ativos['Marca'] != filtro_marca]
-                    # Junta com os editados que ficaram como "Manter"
                     df_final_ativos = pd.concat([df_outras_marcas, mantidos_editados[cols_save]])
                 else:
                     df_final_ativos = mantidos_editados[cols_save]
                 
-                # 2. Salva Ativos Atualizados
                 salvar_full("previsao_ativa", df_final_ativos)
                 
-                # 3. Move Prorrogados (Append)
+                # Prorrogar
                 if not prorrogados.empty:
                     df_prorrog_atual = carregar_aba("prorrogacao")
-                    # Adiciona coluna Data Movimento
                     prorrogados['Data_Movimento'] = datetime.now().strftime("%d/%m/%Y")
-                    # Garante colunas
-                    cols_prorrog = cols_save + ['Data_Movimento']
-                    # Adiciona coluna se nao existir no df_prorrog_atual
-                    if 'Data_Movimento' not in df_prorrog_atual.columns: df_prorrog_atual['Data_Movimento'] = ""
+                    # Garante que df_prorrog_atual tem as colunas certas antes do concat
+                    if df_prorrog_atual.empty: df_prorrog_atual = pd.DataFrame(columns=cols_save + ['Data_Movimento'])
                     
-                    df_novo_prorrog = pd.concat([df_prorrog_atual, prorrogados[cols_prorrog]])
+                    df_novo_prorrog = pd.concat([df_prorrog_atual, prorrogados[cols_save + ['Data_Movimento']]])
                     salvar_full("prorrogacao", df_novo_prorrog)
                     
-                # 4. Move Desistentes (Append)
+                # Desistir
                 if not desistentes.empty:
                     df_desist_atual = carregar_aba("desistencia")
                     desistentes['Data_Movimento'] = datetime.now().strftime("%d/%m/%Y")
-                    cols_desist = cols_save + ['Data_Movimento']
-                     # Adiciona coluna se nao existir 
-                    if 'Data_Movimento' not in df_desist_atual.columns: df_desist_atual['Data_Movimento'] = ""
+                    if df_desist_atual.empty: df_desist_atual = pd.DataFrame(columns=cols_save + ['Data_Movimento'])
                     
-                    df_novo_desist = pd.concat([df_desist_atual, desistentes[cols_desist]])
+                    df_novo_desist = pd.concat([df_desist_atual, desistentes[cols_save + ['Data_Movimento']]])
                     salvar_full("desistencia", df_novo_desist)
                 
-                st.success("Painel atualizado com sucesso!")
+                st.success("Atualizado!")
                 st.rerun()
     else:
         st.warning("Nenhuma previsão ativa. Cadastre na barra lateral.")
@@ -256,8 +269,6 @@ with tab2:
     
     st.markdown("### 🧊 Leads em Stand-by")
     if not df_view_p.empty:
-        # Checkbox para selecionar quais voltar
-        # Hack para selecionar linhas: Data Editor com coluna bool
         df_view_p['Retornar'] = False
         
         edit_prorrog = st.data_editor(
@@ -266,43 +277,32 @@ with tab2:
                 "Retornar": st.column_config.CheckboxColumn("Voltar para Previsão?", default=False),
                 "Valor": st.column_config.NumberColumn(format="R$ %.2f")
             },
-            disabled=["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro", "Data_Movimento"],
+            disabled=COLUNAS_OBRIGATORIAS + ["Data_Movimento"],
             hide_index=True,
             key="editor_prorrog"
         )
         
-        if st.button("🔄 Restaurar Selecionados (Prorrogação)"):
+        if st.button("🔄 Restaurar Selecionados"):
             recuperar = edit_prorrog[edit_prorrog['Retornar'] == True]
             
             if not recuperar.empty:
-                # 1. Adiciona em Ativos
                 df_ativos_atual = carregar_aba("previsao_ativa")
-                cols_base = ["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"]
-                df_ativos_novo = pd.concat([df_ativos_atual, recuperar[cols_base]])
+                df_ativos_novo = pd.concat([df_ativos_atual, recuperar[COLUNAS_OBRIGATORIAS]])
                 salvar_full("previsao_ativa", df_ativos_novo)
                 
-                # 2. Remove de Prorrogação (Logica: Filtra os que NÃO foram marcados)
-                # Precisamos identificar unicamente. Usaremos index resetado se nao tiver ID
-                # Maneira mais segura: Recarregar tudo, e remover as linhas que batem com Consultor+Lead
-                
-                # Se estamos filtrando por marca, precisamos ter cuidado para não apagar outras marcas
-                # O jeito mais facil na UI é reconstruir o DF removendo as linhas selecionadas
-                
-                # Identifica indices que NÃO vao voltar (do dataframe visualizado)
-                ficaram_na_geladeira = edit_prorrog[edit_prorrog['Retornar'] == False]
-                
+                # Remove de Prorrogação
+                ficaram = edit_prorrog[edit_prorrog['Retornar'] == False]
                 if filtro_marca != "TODAS":
                      outras = df_prorrog[df_prorrog['Marca'] != filtro_marca]
-                     novo_prorrog = pd.concat([outras, ficaram_na_geladeira]).drop(columns=['Retornar'])
+                     novo_prorrog = pd.concat([outras, ficaram]).drop(columns=['Retornar'])
                 else:
-                     novo_prorrog = ficaram_na_geladeira.drop(columns=['Retornar'])
+                     novo_prorrog = ficaram.drop(columns=['Retornar'])
                 
                 salvar_full("prorrogacao", novo_prorrog)
-                
-                st.success(f"{len(recuperar)} Leads recuperados para a previsão!")
+                st.success("Leads recuperados!")
                 st.rerun()
     else:
-        st.info("Nenhuma prorrogação encontrada.")
+        st.info("Nenhuma prorrogação.")
 
 # --- TAB 3: DESISTÊNCIAS ---
 with tab3:
@@ -315,36 +315,31 @@ with tab3:
         edit_desist = st.data_editor(
             df_view_d,
             column_config={
-                "Retornar": st.column_config.CheckboxColumn("Recuperar Perda?", default=False),
+                "Retornar": st.column_config.CheckboxColumn("Recuperar?", default=False),
                 "Valor": st.column_config.NumberColumn(format="R$ %.2f")
             },
-            disabled=["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro", "Data_Movimento"],
+            disabled=COLUNAS_OBRIGATORIAS + ["Data_Movimento"],
             hide_index=True,
             key="editor_desist"
         )
         
-        if st.button("♻️ Resgatar Lead (Desistência)"):
+        if st.button("♻️ Resgatar Lead"):
             recuperar_d = edit_desist[edit_desist['Retornar'] == True]
             
             if not recuperar_d.empty:
-                # 1. Adiciona em Ativos
                 df_ativos_atual = carregar_aba("previsao_ativa")
-                cols_base = ["Consultor", "Lead", "Cidade", "Campanha", "Marca", "Valor", "Data_Registro"]
-                df_ativos_novo = pd.concat([df_ativos_atual, recuperar_d[cols_base]])
+                df_ativos_novo = pd.concat([df_ativos_atual, recuperar_d[COLUNAS_OBRIGATORIAS]])
                 salvar_full("previsao_ativa", df_ativos_novo)
                 
-                # 2. Remove de Desistencia
-                ficaram_mortos = edit_desist[edit_desist['Retornar'] == False]
-                
+                ficaram_d = edit_desist[edit_desist['Retornar'] == False]
                 if filtro_marca != "TODAS":
                      outras_d = df_desist[df_desist['Marca'] != filtro_marca]
-                     novo_desist = pd.concat([outras_d, ficaram_mortos]).drop(columns=['Retornar'])
+                     novo_desist = pd.concat([outras_d, ficaram_d]).drop(columns=['Retornar'])
                 else:
-                     novo_desist = ficaram_mortos.drop(columns=['Retornar'])
+                     novo_desist = ficaram_d.drop(columns=['Retornar'])
                 
                 salvar_full("desistencia", novo_desist)
-                
-                st.success(f"{len(recuperar_d)} Leads resgatados!")
+                st.success("Leads resgatados!")
                 st.rerun()
     else:
-        st.info("Nenhuma desistência registrada.")
+        st.info("Nenhuma desistência.")
