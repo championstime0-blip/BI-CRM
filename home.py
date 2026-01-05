@@ -70,6 +70,12 @@ st.markdown("""
 # CONSTANTES & CONEXÃO
 # =========================
 MARCAS = ["PreparaIA", "Microlins", "Ensina Mais 1", "Ensina Mais 2"]
+# Lista completa de motivos esperados para o gráfico
+MOTIVOS_PERDA_MESTRADOS = [
+    "Sem Resposta", "Sem Capital", "Desistiu do Negócio", "Outro Investimento", 
+    "Fora de Perfil", "Não tem interesse em franquia", "Lead Duplicado", 
+    "Dados Inválidos", "Região Indisponível", "Sócio não aprovou"
+]
 
 def conectar_google():
     try:
@@ -155,15 +161,12 @@ def render_dashboard(df, marca):
         if "Fonte" in df.columns:
             df_fonte = df["Fonte"].value_counts().reset_index()
             df_fonte.columns = ["Fonte", "Qtd"]
-            
-            # Gráfico de Pizza com Nome e Número
             fig_pie = px.pie(df_fonte, values='Qtd', names='Fonte', hole=0.6, 
                              color_discrete_sequence=['#22d3ee', '#06b6d4', '#0891b2', '#1e293b'])
             fig_pie.update_traces(textposition='inside', textinfo='label+value')
             fig_pie.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
 
-        # SEÇÃO TOP CAMPANHAS
         if "Campanha" in df.columns:
             st.markdown('<div class="futuristic-sub" style="font-size:18px; margin-top:20px; border:none;"><span class="sub-icon">🚀</span>TOP 3 CAMPANHAS</div>', unsafe_allow_html=True)
             df_camp = df[df["Campanha"] != "N/A"]["Campanha"].value_counts().reset_index()
@@ -215,19 +218,23 @@ def render_dashboard(df, marca):
 
     st.divider()
     subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
-    if not perdidos.empty:
-        perdas_validas = perdidos[~perdidos["Motivo de Perda"].isin(["", "nan", "N/A", "None"])]
-        df_loss = perdas_validas["Motivo de Perda"].value_counts().reset_index()
-        df_loss.columns = ["Motivo", "Qtd"]
-        df_loss = df_loss.sort_values(by="Qtd", ascending=False).head(15)
-        df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#4ade80' if 'sem resposta' in str(x).lower() else '#ef4444')
-        fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h",
-                          color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
-        fig_loss.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig_loss, use_container_width=True)
-        k1, k2 = st.columns(2)
-        with k1: card("Total Perdido", len(perdidos))
-        with k2: card("Leads sem contato", leads_sem_contato_count)
+    
+    # LÓGICA ATUALIZADA: GARANTIR TODOS OS MOTIVOS NO GRÁFICO
+    df_loss = perdidos["Motivo de Perda"].value_counts().reindex(MOTIVOS_PERDA_MESTRADOS, fill_value=0).reset_index()
+    df_loss.columns = ["Motivo", "Qtd"]
+    df_loss = df_loss.sort_values(by="Qtd", ascending=False)
+    
+    df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#4ade80' if 'sem resposta' in str(x).lower() else '#ef4444')
+    
+    fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h",
+                      color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
+    
+    fig_loss.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)", yaxis=dict(autorange="reversed"))
+    st.plotly_chart(fig_loss, use_container_width=True)
+    
+    k1, k2 = st.columns(2)
+    with k1: card("Total Perdido", len(perdidos))
+    with k2: card("Leads sem contato", leads_sem_contato_count)
 
 # =========================
 # APP MAIN
