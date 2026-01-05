@@ -244,41 +244,49 @@ def render_dashboard(df, marca):
             <div class="funnel-sub">Leads Qualificados+ / (Total - Sem Resposta)</div>
         </div>''', unsafe_allow_html=True)
 
-    # 3. DETALHE DAS PERDAS (CORRIGIDO: MOSTRA A REALIDADE DE ONDE PERDEU)
+    # 3. DETALHE DAS PERDAS (AGORA POR MOTIVO DE PERDA)
     st.divider()
-    subheader_futurista("🚫", "DETALHE DAS PERDAS")
+    subheader_futurista("🚫", "DETALHE DAS PERDAS (MOTIVOS)")
     k1, k2 = st.columns(2)
     with k1: card("Total Perdido", len(perdidos))
     with k2: card("Perda: Aguardando s/ Resp.", len(perda_especifica))
     
     st.write("")
-    if not perdidos.empty:
-        # CORREÇÃO: Usamos value_counts para ver apenas onde TEM perda, ordenado do maior pro menor
-        df_loss = perdidos["Etapa"].value_counts().reset_index()
-        df_loss.columns = ["Etapa", "Qtd"]
+    if not perdidos.empty and "Motivo de Perda" in perdidos.columns:
+        # CORREÇÃO: Agrupamos por MOTIVO DE PERDA (e não mais por Etapa)
+        # removemos motivos vazios ou nulos para não poluir
+        perdas_validas = perdidos[~perdidos["Motivo de Perda"].isin(["", "nan", "N/A", "None"])]
+        
+        df_loss = perdas_validas["Motivo de Perda"].value_counts().reset_index()
+        df_loss.columns = ["Motivo", "Qtd"]
+        
+        # Limitamos aos Top 15 motivos para não quebrar o gráfico se tiver muitos
+        df_loss = df_loss.head(15)
         
         df_loss["Percentual"] = (df_loss["Qtd"] / total * 100).round(1) if total > 0 else 0
         df_loss["Label"] = df_loss.apply(lambda x: f"{x['Qtd']} ({x['Percentual']}%)", axis=1)
         
-        # Gráfico em Vermelho para diferenciar do Funil de Conversão
+        # Gráfico em Vermelho (Reds)
         fig_loss = px.bar(
             df_loss, 
             x="Qtd", 
-            y="Etapa", 
+            y="Motivo", 
             text="Label", 
             orientation="h",
             color="Qtd", 
             color_continuous_scale="Reds",
-            title="Ranking de Perdas por Etapa"
+            title="Principais Motivos de Perda (Top 15)"
         )
         fig_loss.update_layout(
             template="plotly_dark", 
             plot_bgcolor="rgba(0,0,0,0)", 
             paper_bgcolor="rgba(0,0,0,0)", 
             showlegend=False,
-            yaxis=dict(autorange="reversed") # Inverte para mostrar a maior perda no topo
+            yaxis=dict(autorange="reversed") # Maior motivo no topo
         )
         st.plotly_chart(fig_loss, use_container_width=True)
+    else:
+        st.info("Não há dados suficientes de motivos de perda preenchidos.")
 
     return {
         "Total": total, "Andamento": len(em_andamento), "Perdidos": len(perdidos),
