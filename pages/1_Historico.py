@@ -76,7 +76,7 @@ def conectar_google():
     except: return None
 
 # =========================
-# FUNÇÕES DE UI (CORREÇÃO DO ERRO)
+# FUNÇÕES DE UI
 # =========================
 def subheader_futurista(icon, text):
     st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
@@ -132,7 +132,9 @@ def render_dashboard(df):
         subheader_futurista("📡", "MARKETING & FONTES")
         if "Fonte" in df.columns:
             df_fonte = df["Fonte"].value_counts().reset_index()
-            fig_pie = px.pie(df_fonte, values=df_fonte.columns[1], names=df_fonte.columns[0], hole=0.6, color_discrete_sequence=px.colors.sequential.Cyan_r)
+            # CORREÇÃO: Usando Blues_r para tons de azul/ciano seguros
+            fig_pie = px.pie(df_fonte, values=df_fonte.columns[1], names=df_fonte.columns[0], hole=0.6, 
+                             color_discrete_sequence=px.colors.sequential.Blues_r)
             fig_pie.update_traces(textposition='inside', textinfo='label+value')
             fig_pie.update_layout(template="plotly_dark", showlegend=False, paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -161,6 +163,7 @@ def render_dashboard(df):
     df_loss.columns = ["Motivo", "Qtd"]
     df_loss = df_loss.sort_values(by="Qtd", ascending=False)
     
+    # CORREÇÃO: Consistência visual (Verde para Sem Resposta, Vermelho para os demais)
     df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#10b981' if 'sem resposta' in str(x).lower() else '#ef4444')
     fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h", color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
     fig_loss.update_layout(template="plotly_dark", showlegend=False, height=500, yaxis=dict(autorange="reversed"))
@@ -170,6 +173,8 @@ def render_dashboard(df):
 # APP MAIN
 # =========================
 st.markdown('<div class="futuristic-title">💠 HISTÓRICO CRM</div>', unsafe_allow_html=True)
+
+
 
 df_hist = get_historico()
 
