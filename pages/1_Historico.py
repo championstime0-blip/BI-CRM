@@ -71,6 +71,16 @@ def conectar_google():
         return gspread.authorize(creds)
     except: return None
 
+def status_logic(row):
+    """Função centralizada para definir o Status (Perdido/Ganho/Andamento)"""
+    estado = str(row.get("Estado", "")).lower()
+    if estado == "perdida": return "Perdido"
+    etapa = str(row.get("Etapa", "")).lower()
+    if any(x in etapa for x in ["faturado", "ganho", "venda"]): return "Ganho"
+    motivo = str(row.get("Motivo de Perda", "")).strip().lower()
+    if motivo not in ["", "nan", "none", "-", "0", "nada", "n/a"]: return "Perdido"
+    return "Em Andamento"
+
 def get_historico():
     client = conectar_google()
     if not client: return pd.DataFrame()
@@ -78,52 +88,22 @@ def get_historico():
         sh = client.open("BI_Historico")
         ws = sh.worksheet("db_snapshots")
         lista_dados = ws.get_all_values()
-        
-        if len(lista_dados) < 2: 
-            return pd.DataFrame()
-            
+        if len(lista_dados) < 2: return pd.DataFrame()
         df = pd.DataFrame(lista_dados[1:], columns=lista_dados[0])
-        # Remove espaços extras dos nomes das colunas para evitar erros de chave
         df.columns = df.columns.str.strip()
+        
+        # Correção KeyError Status: Recalcula se a coluna não vier da planilha
+        if "Status" not in df.columns:
+            df["Status"] = df.apply(status_logic, axis=1)
         return df
     except: return pd.DataFrame()
 
-def load_csv(file):
-    raw = file.read().decode("latin-1", errors="ignore")
-    if raw.strip().startswith("sep="): raw = "\n".join(raw.splitlines()[1:])
-    sep = ";" if raw.count(";") > raw.count(",") else ","
-    return pd.read_csv(io.StringIO(raw), sep=sep, engine="python", on_bad_lines="skip")
-
-def processar(df):
-    df.columns = df.columns.str.strip()
-    df = df.loc[:, ~df.columns.duplicated()]
-    cols_map = {}
-    for c in df.columns:
-        c_lower = str(c).lower()
-        if "fonte" in c_lower and "utm" not in c_lower: cols_map[c] = "Fonte"
-        elif "data de cri" in c_lower: cols_map[c] = "Data de Criação"
-        elif "respons" in c_lower and "equipe" not in c_lower: cols_map[c] = "Responsável"
-        elif "motivo de perda" in c_lower: cols_map[c] = "Motivo de Perda"
-        elif "etapa" in c_lower: cols_map[c] = "Etapa"
-        elif "campanha" in c_lower: cols_map[c] = "Campanha"
-        elif c_lower == "estado": cols_map[c] = "Estado"
-
-    df = df.rename(columns=cols_map)
-    
-    def status_func(row):
-        estado_lower = str(row.get("Estado", "")).lower()
-        if estado_lower == "perdida": return "Perdido"
-        etapa_lower = str(row.get("Etapa", "")).lower()
-        if any(x in etapa_lower for x in ["faturado", "ganho", "venda"]): return "Ganho"
-        motivo = str(row.get("Motivo de Perda", "")).strip().lower()
-        if motivo not in ["", "nan", "none", "-", "0", "nada", "n/a"]: return "Perdido"
-        return "Em Andamento"
-        
-    df["Status"] = df.apply(status_func, axis=1)
-    return df
-
 def render_dashboard(df):
     total = len(df)
+    # Garante que o Status está presente para o dashboard
+    if "Status" not in df.columns:
+        df["Status"] = df.apply(status_logic, axis=1)
+        
     perdidos = df[df["Status"] == "Perdido"]
     em_andamento = df[df["Status"] == "Em Andamento"]
     
@@ -145,8 +125,14 @@ def render_dashboard(df):
     with col_funil:
         subheader_futurista("📉", "FUNIL DE VENDAS")
         ordem_funil = ["Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "negociação", "em aprovação", "faturado"]
-        funil_values = [total] + [len(df[df["Etapa"].str.lower().isin([e.lower() for e in ordem_funil[ordem_funil.index(etp):]])]) for etp in ordem_funil]
+        # Filtro de funil acumulado
         funil_labels = ["TOTAL"] + [e.upper() for e in ordem_funil]
+        funil_values = [total]
+        for etapa in ordem_funil:
+            idx = ordem_funil.index(etapa)
+            etapas_futuras = [e.lower() for e in ordem_funil[idx:]]
+            qtd = len(df[df["Etapa"].str.lower().isin(etapas_futuras)])
+            funil_values.append(qtd)
         
         df_plot = pd.DataFrame({"Etapa": funil_labels, "Qtd": funil_values})
         fig_funil = px.bar(df_plot, y="Etapa", x="Qtd", text="Qtd", orientation="h", color="Qtd", color_continuous_scale="Blues")
@@ -161,7 +147,7 @@ def render_dashboard(df):
     df_loss.columns = ["Motivo", "Qtd"]
     df_loss = df_loss.sort_values(by="Qtd", ascending=False)
     
-    df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#10b981' if 'sem resposta' in str(x).lower() else '#334155')
+    df_loss['color'] = df_loss['Motivo'].apply(lambda x: '#10b981' if 'sem resposta' in str(x).lower() else '#ef4444')
     fig_loss = px.bar(df_loss, x="Qtd", y="Motivo", text="Qtd", orientation="h", color="Motivo", color_discrete_map=dict(zip(df_loss['Motivo'], df_loss['color'])))
     fig_loss.update_layout(template="plotly_dark", showlegend=False, height=500, yaxis=dict(autorange="reversed"))
     st.plotly_chart(fig_loss, use_container_width=True)
@@ -172,51 +158,29 @@ def card(title, value):
 # =========================
 # APP MAIN
 # =========================
-st.markdown('<div class="futuristic-title">💠 CRM EXPANSÃO</div>', unsafe_allow_html=True)
+st.markdown('<div class="futuristic-title">💠 HISTÓRICO CRM</div>', unsafe_allow_html=True)
 
-modo = st.sidebar.radio("Selecione o Modo", ["Snapshot Atual (Upload)", "Visão Histórica (Salvos)"])
+# RETIRADO SNAPSHOT ATUAL - APENAS CONSULTA HISTÓRICA
+df_hist = get_historico()
 
-if modo == "Snapshot Atual (Upload)":
-    marca_sel = st.sidebar.selectbox("Marca", MARCAS)
-    semana_sel = st.sidebar.selectbox("Semana Ref.", ["Semana 1", "Semana 2", "Semana 3", "Semana 4", "Semana 5", "Fechamento Mês"])
-    arquivo = st.file_uploader("Upload CSV RD Station", type=["csv"])
+if not df_hist.empty and 'marca_ref' in df_hist.columns:
+    marcas_disponiveis = df_hist['marca_ref'].unique()
+    marca_hist = st.sidebar.selectbox("Filtrar Marca", marcas_disponiveis)
     
-    if arquivo:
-        df = processar(load_csv(arquivo))
-        st.markdown(f'<div class="profile-header"><div class="profile-group"><span class="profile-label">Modo</span><span class="profile-value">Snapshot Atual</span></div><div class="profile-divider"></div><div class="profile-group"><span class="profile-label">Marca</span><span class="profile-value">{marca_sel}</span></div></div>', unsafe_allow_html=True)
-        render_dashboard(df)
+    df_marca = df_hist[df_hist['marca_ref'] == marca_hist]
+    if 'semana_ref' in df_marca.columns:
+        semanas_disponiveis = df_marca['semana_ref'].unique()
+        semana_hist = st.sidebar.selectbox("Escolher Semana Salva", semanas_disponiveis)
         
-        if st.sidebar.button("🚀 SALVAR NO HISTÓRICO"):
-            client = conectar_google()
-            if client:
-                sh = client.open("BI_Historico")
-                ws = sh.worksheet("db_snapshots")
-                df_to_save = df.copy()
-                df_to_save['snapshot_id'] = datetime.now().strftime("%Y%m%d_%H%M%S")
-                df_to_save['data_salvamento'] = datetime.now().strftime('%d/%m/%Y %H:%M')
-                df_to_save['semana_ref'] = semana_sel
-                df_to_save['marca_ref'] = marca_sel
-                
-                # Se planilha estiver vazia, adiciona cabeçalho
-                if not ws.get_all_values():
-                    ws.append_row(df_to_save.columns.tolist())
-                
-                ws.append_rows(df_to_save.astype(str).values.tolist())
-                st.sidebar.success("Snapshot salvo com sucesso!")
-
+        df_view = df_marca[df_marca['semana_ref'] == semana_hist]
+        
+        st.markdown(f"""
+        <div class="profile-header">
+            <div class="profile-group"><span class="profile-label">Arquivo de Consulta</span><span class="profile-value">{semana_hist}</span></div>
+            <div class="profile-divider"></div>
+            <div class="profile-group"><span class="profile-label">Marca</span><span class="profile-value">{marca_hist}</span></div>
+        </div>""", unsafe_allow_html=True)
+        
+        render_dashboard(df_view)
 else:
-    df_hist = get_historico()
-    if not df_hist.empty and 'marca_ref' in df_hist.columns:
-        marcas_disponiveis = df_hist['marca_ref'].unique()
-        marca_hist = st.sidebar.selectbox("Filtrar Marca", marcas_disponiveis)
-        
-        df_marca = df_hist[df_hist['marca_ref'] == marca_hist]
-        if 'semana_ref' in df_marca.columns:
-            semanas_disponiveis = df_marca['semana_ref'].unique()
-            semana_hist = st.sidebar.selectbox("Filtrar Semana", semanas_disponiveis)
-            
-            df_view = df_marca[df_marca['semana_ref'] == semana_hist]
-            st.markdown(f'<div class="profile-header"><div class="profile-group"><span class="profile-label">Visão Histórica</span><span class="profile-value">{semana_hist}</span></div><div class="profile-divider"></div><div class="profile-group"><span class="profile-label">Marca</span><span class="profile-value">{marca_hist}</span></div></div>', unsafe_allow_html=True)
-            render_dashboard(df_view)
-    else:
-        st.warning("⚠️ Histórico não encontrado ou a planilha não possui a coluna 'marca_ref'. Salve um Snapshot primeiro.")
+    st.warning("⚠️ O histórico está vazio ou os dados salvos não possuem as colunas de referência. Salve um Snapshot na página de Carga primeiro.")
