@@ -77,15 +77,17 @@ def get_historico():
     try:
         sh = client.open("BI_Historico")
         ws = sh.worksheet("db_snapshots")
-        # Correção: Lê todos os valores e transforma em DataFrame usando a primeira linha como colunas
         lista_dados = ws.get_all_values()
-        if not lista_dados: return pd.DataFrame()
-        return pd.DataFrame(lista_dados[1:], columns=lista_dados[0])
+        
+        if len(lista_dados) < 2: 
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(lista_dados[1:], columns=lista_dados[0])
+        # Remove espaços extras dos nomes das colunas para evitar erros de chave
+        df.columns = df.columns.str.strip()
+        return df
     except: return pd.DataFrame()
 
-# =========================
-# LÓGICA DE PROCESSAMENTO
-# =========================
 def load_csv(file):
     raw = file.read().decode("latin-1", errors="ignore")
     if raw.strip().startswith("sep="): raw = "\n".join(raw.splitlines()[1:])
@@ -120,9 +122,6 @@ def processar(df):
     df["Status"] = df.apply(status_func, axis=1)
     return df
 
-# =========================
-# DASHBOARD RENDERING
-# =========================
 def render_dashboard(df):
     total = len(df)
     perdidos = df[df["Status"] == "Perdido"]
@@ -198,7 +197,7 @@ if modo == "Snapshot Atual (Upload)":
                 df_to_save['semana_ref'] = semana_sel
                 df_to_save['marca_ref'] = marca_sel
                 
-                # Correção: Se a planilha estiver vazia, insere o cabeçalho antes dos dados
+                # Se planilha estiver vazia, adiciona cabeçalho
                 if not ws.get_all_values():
                     ws.append_row(df_to_save.columns.tolist())
                 
@@ -206,16 +205,18 @@ if modo == "Snapshot Atual (Upload)":
                 st.sidebar.success("Snapshot salvo com sucesso!")
 
 else:
-    st.sidebar.info("Carregando dados do Google Sheets...")
     df_hist = get_historico()
-    if not df_hist.empty:
+    if not df_hist.empty and 'marca_ref' in df_hist.columns:
         marcas_disponiveis = df_hist['marca_ref'].unique()
         marca_hist = st.sidebar.selectbox("Filtrar Marca", marcas_disponiveis)
-        semanas_disponiveis = df_hist[df_hist['marca_ref'] == marca_hist]['semana_ref'].unique()
-        semana_hist = st.sidebar.selectbox("Filtrar Semana", semanas_disponiveis)
         
-        df_view = df_hist[(df_hist['marca_ref'] == marca_hist) & (df_hist['semana_ref'] == semana_hist)]
-        st.markdown(f'<div class="profile-header"><div class="profile-group"><span class="profile-label">Visão Histórica</span><span class="profile-value">{semana_hist}</span></div><div class="profile-divider"></div><div class="profile-group"><span class="profile-label">Marca</span><span class="profile-value">{marca_hist}</span></div></div>', unsafe_allow_html=True)
-        render_dashboard(df_view)
+        df_marca = df_hist[df_hist['marca_ref'] == marca_hist]
+        if 'semana_ref' in df_marca.columns:
+            semanas_disponiveis = df_marca['semana_ref'].unique()
+            semana_hist = st.sidebar.selectbox("Filtrar Semana", semanas_disponiveis)
+            
+            df_view = df_marca[df_marca['semana_ref'] == semana_hist]
+            st.markdown(f'<div class="profile-header"><div class="profile-group"><span class="profile-label">Visão Histórica</span><span class="profile-value">{semana_hist}</span></div><div class="profile-divider"></div><div class="profile-group"><span class="profile-label">Marca</span><span class="profile-value">{marca_hist}</span></div></div>', unsafe_allow_html=True)
+            render_dashboard(df_view)
     else:
-        st.error("Nenhum dado histórico encontrado ou erro na conexão.")
+        st.warning("⚠️ Histórico não encontrado ou a planilha não possui a coluna 'marca_ref'. Salve um Snapshot primeiro.")
