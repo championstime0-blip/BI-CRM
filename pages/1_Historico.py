@@ -45,6 +45,10 @@ st.markdown("""
     background: linear-gradient(135deg, #111827, #020617);
     padding: 24px; border-radius: 16px; border: 1px solid #1e293b; text-align: center;
 }
+.card-title {
+    font-family: 'Rajdhani', sans-serif; font-size: 14px; font-weight: 600; color: #94a3b8;
+    text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; min-height: 30px; display: flex; align-items: center; justify-content: center;
+}
 .card-value {
     font-family: 'Orbitron', sans-serif; font-size: 36px; font-weight: 700;
     background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
@@ -71,8 +75,19 @@ def conectar_google():
         return gspread.authorize(creds)
     except: return None
 
+# =========================
+# FUNÇÕES DE UI (CORREÇÃO DO ERRO)
+# =========================
+def subheader_futurista(icon, text):
+    st.markdown(f'<div class="futuristic-sub"><span class="sub-icon">{icon}</span>{text}</div>', unsafe_allow_html=True)
+
+def card(title, value):
+    st.markdown(f'<div class="card"><div class="card-title">{title}</div><div class="card-value">{value}</div></div>', unsafe_allow_html=True)
+
+# =========================
+# LÓGICA DE DADOS
+# =========================
 def status_logic(row):
-    """Função centralizada para definir o Status (Perdido/Ganho/Andamento)"""
     estado = str(row.get("Estado", "")).lower()
     if estado == "perdida": return "Perdido"
     etapa = str(row.get("Etapa", "")).lower()
@@ -91,16 +106,16 @@ def get_historico():
         if len(lista_dados) < 2: return pd.DataFrame()
         df = pd.DataFrame(lista_dados[1:], columns=lista_dados[0])
         df.columns = df.columns.str.strip()
-        
-        # Correção KeyError Status: Recalcula se a coluna não vier da planilha
         if "Status" not in df.columns:
             df["Status"] = df.apply(status_logic, axis=1)
         return df
     except: return pd.DataFrame()
 
+# =========================
+# RENDERIZAÇÃO DO DASHBOARD
+# =========================
 def render_dashboard(df):
     total = len(df)
-    # Garante que o Status está presente para o dashboard
     if "Status" not in df.columns:
         df["Status"] = df.apply(status_logic, axis=1)
         
@@ -125,7 +140,6 @@ def render_dashboard(df):
     with col_funil:
         subheader_futurista("📉", "FUNIL DE VENDAS")
         ordem_funil = ["Confirmou Interesse", "Qualificado", "Reunião Agendada", "Reunião Realizada", "negociação", "em aprovação", "faturado"]
-        # Filtro de funil acumulado
         funil_labels = ["TOTAL"] + [e.upper() for e in ordem_funil]
         funil_values = [total]
         for etapa in ordem_funil:
@@ -152,15 +166,11 @@ def render_dashboard(df):
     fig_loss.update_layout(template="plotly_dark", showlegend=False, height=500, yaxis=dict(autorange="reversed"))
     st.plotly_chart(fig_loss, use_container_width=True)
 
-def card(title, value):
-    st.markdown(f'<div class="card"><div class="card-title">{title}</div><div class="card-value">{value}</div></div>', unsafe_allow_html=True)
-
 # =========================
 # APP MAIN
 # =========================
 st.markdown('<div class="futuristic-title">💠 HISTÓRICO CRM</div>', unsafe_allow_html=True)
 
-# RETIRADO SNAPSHOT ATUAL - APENAS CONSULTA HISTÓRICA
 df_hist = get_historico()
 
 if not df_hist.empty and 'marca_ref' in df_hist.columns:
@@ -183,4 +193,4 @@ if not df_hist.empty and 'marca_ref' in df_hist.columns:
         
         render_dashboard(df_view)
 else:
-    st.warning("⚠️ O histórico está vazio ou os dados salvos não possuem as colunas de referência. Salve um Snapshot na página de Carga primeiro.")
+    st.warning("⚠️ O histórico está vazio ou os dados salvos não possuem as colunas de referência.")
